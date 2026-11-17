@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#173831">
+<title>雀庭 · 立直麻将</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <div id="felt"></div>
+
+  <div id="table"></div>
+
+  <div id="hud-left" class="glass">
+    <div class="hud-title">宝牌指示牌</div>
+    <div id="dora"></div>
+  </div>
+
+  <div id="hud-right">
+    <button class="icon-btn" id="btn-tutorial" title="点数教程"><span>学</span><small>教程</small></button>
+    <button class="icon-btn" id="btn-hint" title="让 AI 给个建议"><span>策</span><small>提示</small></button>
+    <button class="icon-btn" id="btn-sound" title="音效开关"><span>音</span><small>音效</small></button>
+    <button class="icon-btn" id="btn-menu" title="回到主菜单"><span>庭</span><small>菜单</small></button>
+  </div>
+
+  <div id="banner"></div>
+  <div id="waits" class="glass"></div>
+  <div id="actions"></div>
+
+  <div id="me">
+    <div id="my-hand"></div>
+    <div id="my-melds"></div>
+  </div>
+
+  <div id="fly"></div>
+  <div id="overlay"></div>
+  <div id="menu"></div>
+  <div id="tutorial"></div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/render.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/tutorial.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
