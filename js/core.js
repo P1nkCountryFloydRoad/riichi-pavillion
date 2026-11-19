@@ -6,9 +6,15 @@
 
   // ---------------------------------------------------------------- 牌
   // 牌 id 0..135，type = id >> 2：0-8 万、9-17 筒、18-26 索、27-30 东南西北、31-33 白发中
-  // 赤宝牌：5万 id16、5筒 id52、5索 id88
+  // 赤宝牌：三枚时为 5万 id16、5筒 id52、5索 id88；四枚时再加 5筒 id53
   const typeOf = (id) => id >> 2;
-  const isRed = (id) => id === 16 || id === 52 || id === 88;
+  const AKA_SETS = { 0: [], 3: [16, 52, 88], 4: [16, 52, 53, 88] };
+  let RED = new Set(AKA_SETS[3]);
+  const isRed = (id) => RED.has(id);
+  /** 设置本局使用的赤宝牌枚数（0 / 3 / 4），影响显示与计分 */
+  function setAka(n) {
+    RED = new Set(AKA_SETS[n] || AKA_SETS[3]);
+  }
   const suitOf = (t) => (t < 27 ? (t / 9) | 0 : 3);
   const numOf = (t) => (t < 27 ? (t % 9) + 1 : t - 26);
   const isHonor = (t) => t >= 27;
@@ -58,7 +64,7 @@
       if (red) return t * 4;
       const k = used[t] || 0;
       used[t] = k + 1;
-      return t * 4 + (five ? 1 + (k % 3) : k % 4);
+      return t * 4 + (five ? 3 - (k % 3) : k % 4);
     });
   }
 
@@ -228,9 +234,9 @@
   // ---------------------------------------------------------------- 点数
   const ceil100 = (x) => Math.ceil(x / 100) * 100;
 
-  function basePoints(han, fu, yakuman) {
+  function basePoints(han, fu, yakuman, kazoe) {
     if (yakuman) return 8000 * yakuman;
-    if (han >= 13) return 8000;
+    if (han >= 13) return kazoe === false ? 6000 : 8000;
     if (han >= 11) return 6000;
     if (han >= 8) return 4000;
     if (han >= 6) return 3000;
@@ -238,9 +244,9 @@
     return Math.min(2000, fu * Math.pow(2, han + 2));
   }
 
-  function limitName(han, fu, yakuman) {
+  function limitName(han, fu, yakuman, kazoe) {
     if (yakuman) return ['役满', '双倍役满', '三倍役满', '四倍役满', '五倍役满', '六倍役满'][Math.min(yakuman, 6) - 1];
-    if (han >= 13) return '累计役满';
+    if (han >= 13) return kazoe === false ? '三倍满' : '累计役满';
     if (han >= 11) return '三倍满';
     if (han >= 8) return '倍满';
     if (han >= 6) return '跳满';
@@ -271,6 +277,7 @@
    *  hand: 手牌 id（含和了牌），melds: [{type:'chi'|'pon'|'minkan'|'kakan'|'ankan', tiles:[id]}]
    *  winTile, tsumo, riichi(0/1/2), ippatsu, rinshan, chankan, haitei, houtei, tenhou, chiihou
    *  seatWind, roundWind (0..3), doraInd: [id], uraInd: [id]
+   *  可选规则：kuitan（食断，默认 true）、kazoe（累计役满，默认 true）、multiYakuman（役满复合，默认 true）
    * 无役返回 null。
    */
   function evaluateWin(ctx) {
@@ -331,6 +338,7 @@
     const finish = (yaku, yakumanNames, fu, fuDetail, form, wait) => {
       const out = { form, wait: wait || null, fuDetail: fuDetail || [], tsumo, menzen };
       yakumanNames = yakumanNames.concat(sitYakuman);
+      if (ctx.multiYakuman === false) yakumanNames = yakumanNames.slice(0, 1);
       if (yakumanNames.length) {
         out.yaku = yakumanNames.map((n) => ({ name: n, han: 13, yakuman: true }));
         out.yakuman = yakumanNames.length;
@@ -349,8 +357,8 @@
         out.han = yaku.reduce((s, y) => s + y.han, 0);
         out.fu = fu;
       }
-      out.base = basePoints(out.han, out.fu, out.yakuman);
-      out.limit = limitName(out.han, out.fu, out.yakuman);
+      out.base = basePoints(out.han, out.fu, out.yakuman, ctx.kazoe);
+      out.limit = limitName(out.han, out.fu, out.yakuman, ctx.kazoe);
       return out;
     };
 
@@ -487,7 +495,7 @@
         // ---- 一般役
         const yaku = [];
         if (isPinfu) yaku.push({ name: '平和', han: 1 });
-        if (noYaochu) yaku.push({ name: '断幺九', han: 1 });
+        if (noYaochu && (menzen || ctx.kuitan !== false)) yaku.push({ name: '断幺九', han: 1 });
         if (menzen) {
           const cnt = {};
           for (const s of closed) if (s.k === 'seq') cnt[s.t] = (cnt[s.t] || 0) + 1;
@@ -549,7 +557,61 @@
     return best;
   }
 
+  /** 默认规则（与雀魂 / 天凤段位战大体一致） */
+  const DEFAULT_RULES = {
+    startPoints: 25000, // 起始点数
+    goalPoints: 30000, // 返点：南四局结束时有人达到才终局
+    westRound: true, // 西入：无人达到返点时延长
+    tobi: true, // 击飞：有人点数低于 0 时终局
+    aka: 3, // 赤宝牌枚数 0 / 3 / 4
+    kuitan: true, // 食断
+    ippatsu: true,
+    uradora: true,
+    kandora: true,
+    kazoe: true, // 累计役满（13 番以上算役满）
+    multiYakuman: true, // 役满复合（双倍役满等）
+    multiRon: 'multi', // 'multi' 允许双响 / 'head' 头跳（只算离放铳者最近的一家）
+    kyuushu: true, // 九种九牌
+    suufon: true, // 四风连打
+    suucha: true, // 四家立直
+    suukaikan: true, // 四杠散了
+    sanchahou: true, // 三家和了
+    nagashi: true, // 流局满贯
+    uma: '15-5', // 顺位马，见 UMA
+    ai: 'builtin', // 'builtin' | 'mortal'
+    mortalUrl: 'http://127.0.0.1:8174',
+    aiSpeed: 'normal', // 'normal' | 'fast'
+  };
+
+  // 顺位马（单位：千点）。雀魂友人场默认 +15 / +5 / −5 / −15
+  const UMA = {
+    none: [0, 0, 0, 0],
+    '5-10': [10, 5, -5, -10],
+    '15-5': [15, 5, -5, -15],
+    '10-20': [20, 10, -10, -20],
+    '10-30': [30, 10, -10, -30],
+  };
+
+  /**
+   * 终局精算：(终局点数 − 返点) / 1000 + 顺位马，一位另得返点差（(返点 − 起始点) × 4 / 1000）。
+   * ranking 为按顺位排好的座位（同分时按起家顺序已排好）。返回每个座位的得点（保留一位小数），合计为 0。
+   */
+  function calcFinal(scores, ranking, rules) {
+    const r = Object.assign({}, DEFAULT_RULES, rules);
+    const start = r.startPoints;
+    const goal = Math.max(r.goalPoints, start);
+    const uma = UMA[r.uma] || UMA.none;
+    const oka = ((goal - start) * 4) / 100; // 以 100 点为单位，避免浮点误差
+    const pts = [0, 0, 0, 0];
+    ranking.forEach((seat, i) => {
+      const t = Math.round((scores[seat] - goal) / 100) + uma[i] * 10 + (i === 0 ? oka : 0);
+      pts[seat] = t / 10 || 0; // 避免 -0
+    });
+    return pts;
+  }
+
   Object.assign(MJ, {
+    DEFAULT_RULES, setAka, AKA_SETS, UMA, calcFinal,
     typeOf, isRed, suitOf, numOf, isHonor, isYaochu, typeName, counts, sortIds,
     parseTypes, parseIds, doraFromIndicator,
     shanten, shantenRegular, shantenChiitoi, shantenKokushi, waits, decompose,

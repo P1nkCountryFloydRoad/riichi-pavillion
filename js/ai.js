@@ -19,7 +19,7 @@
     const vh = valueHonors(g, seat);
     for (const m of melds) if (m.type !== 'chi' && vh.includes(typeOf(m.tiles[0]))) return 'free';
     for (const t of vh) if (c[t] >= 3) return 'free';
-    if (melds.every(meldIsSimple)) return 'tanyao';
+    if (g.rules.kuitan && melds.every(meldIsSimple)) return 'tanyao';
     return 'none';
   }
 
@@ -191,6 +191,11 @@
 
   function decideTurn(g, seat, opt) {
     if (opt.tsumo) return { type: 'tsumo' };
+    if (opt.kyuushu) {
+      // 幺九牌种类不多时流局；十种以上去做国士无双
+      const c = counts(g.hands[seat]);
+      if (MJ.YAOCHU_LIST.filter((t) => c[t] > 0).length <= 9) return { type: 'kyuushu' };
+    }
     if (g.riichi[seat]) {
       if (opt.ankan.length) return { type: 'ankan', t: opt.ankan[0] };
       return { type: 'discard', tile: opt.drawn };

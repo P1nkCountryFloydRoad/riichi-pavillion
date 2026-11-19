@@ -8,15 +8,11 @@
   const Sound = {
     on: true,
     init() {
-      try {
-        this.on = localStorage.getItem('mj-sound') !== '0';
-      } catch (e) { /* 隐私模式下忽略 */ }
+      this.on = MJ.Store.get('mj-sound', 1) !== 0; // 旧版存的是 '0' / '1'，JSON 解析后同样兼容
     },
     toggle() {
       this.on = !this.on;
-      try {
-        localStorage.setItem('mj-sound', this.on ? '1' : '0');
-      } catch (e) { /* ignore */ }
+      MJ.Store.set('mj-sound', this.on ? 1 : 0);
       if (this.on) this.play('click');
       return this.on;
     },

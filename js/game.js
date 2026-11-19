@@ -14,7 +14,12 @@
       this.listener = opts.listener || (async () => {});
       this.length = opts.length || 'south'; // 'east' 东风战 | 'south' 半庄战
       this.rng = opts.rng || Math.random;
-      this.scores = [25000, 25000, 25000, 25000];
+      this.rules = Object.assign({}, MJ.DEFAULT_RULES, opts.rules || {});
+      this.rules.goalPoints = Math.max(this.rules.goalPoints, this.rules.startPoints);
+      MJ.setAka(this.rules.aka);
+      const sp = this.rules.startPoints;
+      this.scores = [sp, sp, sp, sp];
+      this.taps = []; // 同步观察者（如 mjai 记录器），先于 listener 调用
       this.kyoku = 0;
       this.honba = 0;
       this.sticks = 0;
@@ -34,6 +39,7 @@
 
     async emit(type, data) {
       if (this.aborted) throw new Aborted();
+      for (const f of this.taps) f(type, data || {}, this);
       await this.listener(type, data || {}, this);
       if (this.aborted) throw new Aborted();
     }
@@ -47,7 +53,8 @@
           this.scores[order[0]] += this.sticks * 1000;
           this.sticks = 0;
         }
-        await this.emit('gameEnd', { ranking: order, scores: this.scores.slice() });
+        const points = MJ.calcFinal(this.scores, order, this.rules);
+        await this.emit('gameEnd', { ranking: order, scores: this.scores.slice(), points });
       } catch (e) {
         if (!(e instanceof Aborted)) throw e;
       }
@@ -86,12 +93,19 @@
       this.safe = [new Set(), new Set(), new Set(), new Set()];
       this.drawn = [null, null, null, null];
       this.kanCount = 0;
+      this.kanOwners = [];
       this.noCalls = true;
       this.turn = this.dealer;
       this.lastDiscard = null;
     }
 
     get uraInd() { return this.uraAll.slice(0, this.doraInd.length); }
+
+    /** 流局满贯：舍牌全是幺九牌且没有被鸣走 */
+    isNagashi(seat) {
+      const d = this.discards[seat];
+      return d.length > 0 && d.every((x) => !x.called && MJ.isYaochu(typeOf(x.id)));
+    }
 
     /** 某家视角下已经可见的各种牌张数 */
     visibleCounts(seat) {
@@ -126,7 +140,7 @@
         melds: this.melds[seat],
         winTile, tsumo,
         riichi: this.riichi[seat],
-        ippatsu: this.ippatsu[seat],
+        ippatsu: this.rules.ippatsu && this.ippatsu[seat],
         rinshan: !!extra.rinshan,
         chankan: !!extra.chankan,
         haitei: tsumo && !extra.rinshan && this.tilesLeft === 0,
@@ -136,7 +150,10 @@
         seatWind: this.seatWind(seat),
         roundWind: this.roundWind,
         doraInd: this.doraInd,
-        uraInd: this.uraInd,
+        uraInd: this.rules.uradora ? this.uraInd : [],
+        kuitan: this.rules.kuitan,
+        kazoe: this.rules.kazoe,
+        multiYakuman: this.rules.multiYakuman,
       });
     }
 
@@ -145,7 +162,10 @@
       const hand = this.hands[seat];
       const c = counts(hand);
       const nM = this.melds[seat].length;
-      const opt = { drawn, tsumo: false, riichi: [], ankan: [], kakan: [], discards: [], mode };
+      const opt = { drawn, tsumo: false, riichi: [], ankan: [], kakan: [], discards: [], mode, kyuushu: false };
+      if (this.rules.kyuushu && mode === 'draw' && this.noCalls && this.discards[seat].length === 0) {
+        opt.kyuushu = MJ.YAOCHU_LIST.filter((t) => c[t] > 0).length >= 9;
+      }
       if (mode !== 'called') {
         if (shanten(c, nM) === -1 && this.evalFor(seat, drawn, true, { rinshan: mode === 'rinshan' })) opt.tsumo = true;
         if (this.tilesLeft > 0 && this.kanCount < 4) {
@@ -263,6 +283,8 @@
           return this.finishWin([{ seat, from: seat, tile: drawn, tsumo: true, extra: { rinshan: mode === 'rinshan' } }]);
         }
 
+        if (act.type === 'kyuushu') return this.abortiveDraw('kyuushu', { seat });
+
         if (act.type === 'ankan') {
           const t = act.t;
           const tiles = this.hands[seat].filter((id) => typeOf(id) === t);
@@ -270,9 +292,9 @@
           const meld = { type: 'ankan', tiles, from: seat };
           this.melds[seat].push(meld);
           this.drawn[seat] = null;
-          this.afterKan();
+          this.afterKan(seat);
           await this.emit('call', { seat, meld, from: seat, kind: 'ankan' });
-          await this.emit('dora', { ind: this.doraInd.slice() });
+          if (this.rules.kandora) await this.emit('dora', { ind: this.doraInd.slice() });
           mode = 'rinshan';
           continue;
         }
@@ -301,15 +323,16 @@
             const answers = await Promise.all(robbers.map((s) =>
               this.agents[s].onCall(this, s, { tile: id, from: seat, ron: true, pon: false, kan: false, chi: [], chankan: true })));
             if (this.aborted) throw new Aborted();
-            const wins = [];
+            let wins = [];
             robbers.forEach((s, i) => {
               if (answers[i] && answers[i].type === 'ron') wins.push({ seat: s, from: seat, tile: id, tsumo: false, extra: { chankan: true } });
               else this.markMissed(s);
             });
+            if (this.rules.multiRon === 'head') wins = wins.slice(0, 1);
             if (wins.length) return this.finishWin(wins);
           }
-          this.afterKan();
-          await this.emit('dora', { ind: this.doraInd.slice() });
+          this.afterKan(seat);
+          if (this.rules.kandora) await this.emit('dora', { ind: this.doraInd.slice() });
           mode = 'rinshan';
           continue;
         }
@@ -347,7 +370,7 @@
           answers = await Promise.all(responders.map((r) => this.agents[r.s].onCall(this, r.s, r.o)));
           if (this.aborted) throw new Aborted();
         }
-        const wins = [];
+        let wins = [];
         responders.forEach((r, i) => {
           const a = answers[i] || { type: 'pass' };
           if (r.o.ron) {
@@ -355,13 +378,24 @@
             else this.markMissed(r.s);
           }
         });
+        if (wins.length === 3 && this.rules.sanchahou) return this.abortiveDraw('sanchahou', { seats: wins.map((w) => w.seat), from: seat });
+        if (this.rules.multiRon === 'head') wins = wins.slice(0, 1);
         if (wins.length) return this.finishWin(wins);
 
         if (declare) {
           this.scores[seat] -= 1000;
           this.sticks++;
           await this.emit('riichiAccepted', { seat });
+          if (this.rules.suucha && this.riichi.every(Boolean)) return this.abortiveDraw('suucha', {});
         }
+
+        // 四风连打：第一巡四家打出同一种风牌
+        if (this.rules.suufon && this.noCalls && this.discards.every((d) => d.length === 1)) {
+          const t0 = typeOf(this.discards[0][0].id);
+          if (t0 >= 27 && t0 <= 30 && this.discards.every((d) => typeOf(d[0].id) === t0)) return this.abortiveDraw('suufon', { tile: t0 });
+        }
+        // 四杠散了：两家以上合计开了四个杠，杠后的舍牌无人荣和
+        if (this.rules.suukaikan && this.kanCount === 4 && new Set(this.kanOwners).size > 1) return this.abortiveDraw('suukaikan', {});
 
         let call = null;
         responders.forEach((r, i) => {
@@ -407,10 +441,10 @@
         this.melds[s].push(meld);
         this.turn = s;
         const isKan = meld.type === 'minkan';
-        if (isKan) this.afterKan();
+        if (isKan) this.afterKan(s);
         await this.emit('call', { seat: s, meld, from: seat, kind: meld.type });
         if (isKan) {
-          await this.emit('dora', { ind: this.doraInd.slice() });
+          if (this.rules.kandora) await this.emit('dora', { ind: this.doraInd.slice() });
           kuikae = null;
         }
         seat = s;
@@ -418,16 +452,18 @@
       }
     }
 
-    afterKan() {
+    afterKan(seat) {
       this.kanCount++;
+      this.kanOwners.push(seat);
       this.noCalls = false;
       this.ippatsu = [false, false, false, false];
-      this.doraInd.push(this.doraAll[this.kanCount]);
+      if (this.rules.kandora) this.doraInd.push(this.doraAll[this.kanCount]);
     }
 
     sanitizeTurn(seat, opt, act) {
       act = act || {};
       if (act.type === 'tsumo' && opt.tsumo) return act;
+      if (act.type === 'kyuushu' && opt.kyuushu) return act;
       if (act.type === 'ankan' && opt.ankan.includes(act.t)) return act;
       if (act.type === 'kakan' && opt.kakan.includes(act.t)) return act;
       if (act.type === 'discard' && opt.discards.includes(act.tile)) return act;
@@ -491,12 +527,24 @@
       const tenpai = [0, 1, 2, 3].map((s) => shanten(counts(this.hands[s]), this.melds[s].length) === 0);
       const n = tenpai.filter(Boolean).length;
       const deltas = [0, 0, 0, 0];
-      if (n > 0 && n < 4) {
+      const nagashi = this.rules.nagashi ? [0, 1, 2, 3].filter((s) => this.isNagashi(s)) : [];
+      if (nagashi.length) {
+        // 按满贯自摸支付，不再收取不听罚符
+        for (const w of nagashi) {
+          const pay = calcPayments(2000, w === dealer, true, 0);
+          for (let s = 0; s < 4; s++) {
+            if (s === w) continue;
+            const p = w === dealer ? pay.all : s === dealer ? pay.dealer : pay.other;
+            deltas[s] -= p;
+            deltas[w] += p;
+          }
+        }
+      } else if (n > 0 && n < 4) {
         for (let s = 0; s < 4; s++) deltas[s] = tenpai[s] ? 3000 / n : -3000 / (4 - n);
       }
       const before = this.scores.slice();
       for (let s = 0; s < 4; s++) this.scores[s] += deltas[s];
-      await this.emit('ryuukyoku', { tenpai, deltas, before, after: this.scores.slice() });
+      await this.emit('ryuukyoku', { tenpai, nagashi, deltas, before, after: this.scores.slice() });
       const renchan = tenpai[dealer];
       const played = this.kyoku;
       this.honba++;
@@ -504,17 +552,35 @@
       this.checkEnd(played, renchan, dealer);
     }
 
+    /** 途中流局：不计点数，本场 +1，亲家连庄，供托留在桌上 */
+    async abortiveDraw(kind, extra) {
+      const dealer = this.dealer;
+      const scores = this.scores.slice();
+      await this.emit('abort', Object.assign({ kind, before: scores, after: scores, deltas: [0, 0, 0, 0] }, extra));
+      const played = this.kyoku;
+      this.honba++;
+      this.checkEnd(played, true, dealer);
+    }
+
     checkEnd(played, renchan, dealer) {
-      if (this.scores.some((x) => x < 0)) {
+      const R = this.rules;
+      if (R.tobi && this.scores.some((x) => x < 0)) {
         this.over = true;
         return;
       }
       const last = this.length === 'east' ? 3 : 7;
       if (played < last) return;
       const top = Math.max.apply(null, this.scores);
+      const goal = R.goalPoints;
       const dealerTop = this.scores[dealer] === top && this.scores.filter((x) => x === top).length === 1;
-      if (top >= 30000 && (!renchan || dealerTop || played > last)) this.over = true;
-      else if (this.kyoku > last + 4) this.over = true;
+      if (renchan) {
+        // 尾局亲家连庄：亲家已是第一（且达到返点，或不设西入）则和了止め
+        if (dealerTop && (top >= goal || !R.westRound)) this.over = true;
+      } else if (top >= goal || !R.westRound) {
+        this.over = true;
+      }
+      // 西入最多延长一圈
+      if (this.kyoku > last + 4) this.over = true;
     }
   }
 
