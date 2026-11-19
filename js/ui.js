@@ -9,9 +9,15 @@
   const $ = (s, root) => (root || document).querySelector(s);
   const $$ = (s, root) => Array.from((root || document).querySelectorAll(s));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const WIND = ['東', '南', '西', '北'];
+  const L = MJ.L;
+  const tr = MJ.tr;
+  const EN = MJ.lang === 'en';
+  const WIND = EN ? ['E', 'S', 'W', 'N'] : ['東', '南', '西', '北'];
   const NUM = ['一', '二', '三', '四'];
-  const SEAT = ['你', '下家', '对家', '上家'];
+  const SEAT = ['你', '下家', '对家', '上家'].map(tr);
+  const roundTitle = (g) => (EN ? `${MJ.windName(g.roundWind)} ${(g.kyoku % 4) + 1}` : WIND[g.roundWind] + NUM[g.kyoku % 4] + '局');
+  /** 东家 · 下家 / Right (East) */
+  const whoLabel = (wind, s) => (EN ? `${SEAT[s]} (${MJ.windName(wind)})` : `${WIND[wind]}家 · ${SEAT[s]}`);
   const EASE = 'cubic-bezier(.2,.8,.25,1)';
   const DIRS = [[0, 1], [-1, 0], [0, -1], [1, 0]];
   const fmt = R.fmt;
@@ -65,9 +71,9 @@
   function renderCenter() {
     const g = UI.game;
     if (!g) return;
-    $('#center .round').textContent = WIND[g.roundWind] + NUM[g.kyoku % 4] + '局';
-    $('#center .counts').innerHTML = `<span><i>本场</i>${g.honba}</span><span><i>供托</i>${g.sticks}</span>`;
-    $('#center .wall-left').innerHTML = `余 <b>${g.live ? g.tilesLeft : 70}</b> 张`;
+    $('#center .round').textContent = roundTitle(g);
+    $('#center .counts').innerHTML = `<span><i>${L('本场', 'Honba')}</i>${g.honba}</span><span><i>${L('供托', 'Sticks')}</i>${g.sticks}</span>`;
+    $('#center .wall-left').innerHTML = L(`余 <b>${g.live ? g.tilesLeft : 70}</b> 张`, `<b>${g.live ? g.tilesLeft : 70}</b> left`);
     for (let s = 0; s < 4; s++) {
       const p = $(`.plate[data-seat="${s}"]`);
       p.querySelector('.wind').textContent = WIND[g.seatWind(s)];
@@ -212,9 +218,9 @@
     const html = types.map((t) => {
       const n = Math.max(0, 4 - vis[t]);
       sum += n;
-      return `<div class="w">${R.tileHTMLByType(t, false)}<small>${n} 张</small></div>`;
+      return `<div class="w">${R.tileHTMLByType(t, false)}<small>${L(n + ' 张', '×' + n)}</small></div>`;
     }).join('');
-    box.innerHTML = `<span class="lab${furiten ? ' furiten' : ''}">${furiten ? '振听' : label}</span>${html}<span class="sum">共 ${sum} 张</span>`;
+    box.innerHTML = `<span class="lab${furiten ? ' furiten' : ''}">${furiten ? L('振听', 'Furiten') : label}</span>${html}<span class="sum">${L(`共 ${sum} 张`, `${sum} tiles`)}</span>`;
     box.classList.add('show');
   }
 
@@ -223,12 +229,13 @@
     if (!g || !g.hands) return;
     if (g.drawn[0] != null || (g.hands[0].length + g.melds[0].length * 3) !== 13) return;
     const w = MJ.waits(counts(g.hands[0]), g.melds[0].length);
-    showWaits(w, '听牌', w.length && g.isFuriten(0));
+    showWaits(w, L('听牌', 'Waits'), w.length && g.isFuriten(0));
   }
 
   // ------------------------------------------------------------ 操作按钮
   function clearActions() {
     $('#actions').innerHTML = '';
+    clearHint();
   }
 
   function showActions(btns) {
@@ -293,11 +300,11 @@
       const p = (UI.pending = { kind: 'turn', opt, done, riichiMode: false, waitsBy });
       const build = () => {
         const btns = [];
-        if (opt.tsumo) btns.push({ label: '自摸', cls: 'win', key: 'tsumo', fn: () => done({ type: 'tsumo' }) });
-        if (opt.kyuushu) btns.push({ label: '九种九牌', cls: 'call', key: 'kyuushu', fn: () => done({ type: 'kyuushu' }) });
+        if (opt.tsumo) btns.push({ label: L('自摸', 'Tsumo'), cls: 'win', key: 'tsumo', fn: () => done({ type: 'tsumo' }) });
+        if (opt.kyuushu) btns.push({ label: L('九种九牌', 'Nine terminals'), cls: 'call', key: 'kyuushu', fn: () => done({ type: 'kyuushu' }) });
         if (opt.riichi.length) {
           btns.push({
-            label: p.riichiMode ? '取消' : '立直', cls: p.riichiMode ? '' : 'riichi', key: 'riichi',
+            label: p.riichiMode ? L('取消', 'Cancel') : L('立直', 'Riichi'), cls: p.riichiMode ? '' : 'riichi', key: 'riichi',
             fn: () => {
               p.riichiMode = !p.riichiMode;
               build();
@@ -306,16 +313,16 @@
           });
         }
         const kans = opt.ankan.map((t) => ({ type: 'ankan', t })).concat(opt.kakan.map((t) => ({ type: 'kakan', t })));
-        if (kans.length === 1) btns.push({ label: '杠', cls: 'call', key: 'kan', fn: () => done(kans[0]) });
+        if (kans.length === 1) btns.push({ label: L('杠', 'Kan'), cls: 'call', key: 'kan', fn: () => done(kans[0]) });
         else if (kans.length > 1) {
           btns.push({
-            label: '杠', cls: 'call', key: 'kan',
+            label: L('杠', 'Kan'), cls: 'call', key: 'kan',
             fn: () => showActions(kans.map((k) => ({
               cls: 'opt', html: R.tileHTMLByType(k.t, false).repeat(4), fn: () => done(k),
-            })).concat([{ label: '返回', fn: build }])),
+            })).concat([{ label: L('返回', 'Back'), fn: build }])),
           });
         }
-        if (g.riichi[0]) btns.push({ label: '跳过', key: 'pass', fn: () => done({ type: 'discard', tile: opt.drawn }) });
+        if (g.riichi[0]) btns.push({ label: L('跳过', 'Skip'), key: 'pass', fn: () => done({ type: 'discard', tile: opt.drawn }) });
         showActions(btns);
       };
       build();
@@ -336,12 +343,12 @@
       if (target) target.classList.add('target');
       const build = () => {
         const btns = [];
-        if (o.ron) btns.push({ label: '荣', cls: 'win', key: 'ron', fn: () => done({ type: 'ron' }) });
-        if (o.kan) btns.push({ label: '杠', cls: 'call', key: 'kan', fn: () => done({ type: 'kan' }) });
-        if (o.pon) btns.push({ label: '碰', cls: 'call', key: 'pon', fn: () => done({ type: 'pon' }) });
+        if (o.ron) btns.push({ label: L('荣', 'Ron'), cls: 'win', key: 'ron', fn: () => done({ type: 'ron' }) });
+        if (o.kan) btns.push({ label: L('杠', 'Kan'), cls: 'call', key: 'kan', fn: () => done({ type: 'kan' }) });
+        if (o.pon) btns.push({ label: L('碰', 'Pon'), cls: 'call', key: 'pon', fn: () => done({ type: 'pon' }) });
         if (o.chi.length) {
           btns.push({
-            label: '吃', cls: 'call', key: 'chi',
+            label: L('吃', 'Chi'), cls: 'call', key: 'chi',
             fn: () => {
               if (o.chi.length === 1) return done({ type: 'chi', tiles: o.chi[0] });
               showActions(o.chi.map((pair) => {
@@ -350,11 +357,11 @@
                   cls: 'opt', html: three.map((id) => R.tileHTML(id, id === o.tile ? 'dimmed' : '')).join(''),
                   fn: () => done({ type: 'chi', tiles: pair }),
                 };
-              }).concat([{ label: '返回', fn: build }]));
+              }).concat([{ label: L('返回', 'Back'), fn: build }]));
             },
           });
         }
-        btns.push({ label: '跳过', key: 'pass', fn: () => done({ type: 'pass' }) });
+        btns.push({ label: L('跳过', 'Skip'), key: 'pass', fn: () => done({ type: 'pass' }) });
         showActions(btns);
       };
       build();
@@ -383,7 +390,7 @@
     const p = UI.pending;
     if (p && p.kind === 'turn' && !t.classList.contains('dim')) {
       const w = p.waitsBy.get(+t.dataset.t);
-      if (w) showWaits(w, '打出后听');
+      if (w) showWaits(w, L('打出后听', 'Then waits on'));
       else $('#waits').classList.remove('show');
     }
   }
@@ -394,15 +401,123 @@
     if (p && p.kind === 'turn') $('#waits').classList.remove('show');
   }
 
-  function hint() {
+  // ------------------------------------------------------------ 「策」提示
+  function flashAction(key) {
+    const b = $(`#actions .act[data-key="${key}"]`);
+    if (b) b.classList.add('suggest');
+  }
+
+  function clearHint() {
+    UI.hintToken = null;
+    const hp = $('#hint-panel');
+    if (hp) {
+      hp.classList.remove('show');
+      hp.innerHTML = '';
+    }
+    $$('#my-hand .tile[data-p]').forEach((t) => { t.removeAttribute('data-p'); t.classList.remove('p-best'); });
+    $$('#my-hand .tile.hint').forEach((t) => t.classList.remove('hint'));
+    $$('#actions .act.suggest').forEach((b) => b.classList.remove('suggest'));
+  }
+
+  function hintPanel(html) {
+    const hp = $('#hint-panel');
+    hp.innerHTML = html;
+    hp.classList.add('show');
+  }
+
+  const pctText = (p) => (p >= 0.995 ? '99+%' : p >= 0.1 ? Math.round(p * 100) + '%' : p >= 0.001 ? (p * 100).toFixed(1) + '%' : '<0.1%');
+
+  /** Mortal 动作编号 → 显示用的标签 HTML 与对应的按钮 key */
+  function actionLabel(it, p) {
+    const a = it.action;
+    if (it.tile) return { html: `<span class="hl-tile">${R.tileHTMLByType(it.tile.t, it.tile.red)}</span><span>${L('打', 'discard')}</span>`, key: null };
+    if (a === 37) return { html: `<b>${L('立直', 'Riichi')}</b>`, key: 'riichi' };
+    if (a >= 38 && a <= 40) {
+      const t = typeOf(p.o.tile);
+      const base = a === 38 ? t : a === 39 ? t - 1 : t - 2;
+      const tiles = [base, base + 1, base + 2].map((x) => R.tileHTMLByType(x, false, x === t ? 'dimmed' : '')).join('');
+      return { html: `<b>${L('吃', 'Chi')}</b><span class="hl-tile">${tiles}</span>`, key: 'chi' };
+    }
+    if (a === 41) return { html: `<b>${L('碰', 'Pon')}</b>`, key: 'pon' };
+    if (a === 42) return { html: `<b>${L('杠', 'Kan')}</b>`, key: 'kan' };
+    if (a === 43) return { html: `<b>${p.kind === 'turn' ? L('自摸', 'Tsumo') : L('荣和', 'Ron')}</b>`, key: p.kind === 'turn' ? 'tsumo' : 'ron' };
+    if (a === 44) return { html: `<b>${L('九种九牌', 'Nine terminals')}</b>`, key: 'kyuushu' };
+    return { html: `<b>${p.kind === 'turn' ? L('不操作', 'No action') : L('跳过', 'Skip')}</b>`, key: 'pass' };
+  }
+
+  function hintSource() {
+    const r = UI.rules || MJ.Settings.rules;
+    if (r.hintAi === 'builtin' || !UI.advisor) return 'builtin';
+    return 'mortal';
+  }
+
+  async function hint() {
     const g = UI.game, p = UI.pending;
     if (!g || !p) return;
     Sound.play('click');
-    const flash = (key) => {
-      const b = $(`#actions .act[data-key="${key}"]`);
-      if (b) b.classList.add('suggest');
-    };
-    $$('#actions .act.suggest').forEach((b) => b.classList.remove('suggest'));
+    clearHint();
+    if (hintSource() === 'mortal') return mortalHint(g, p);
+    builtinHint(g, p);
+  }
+
+  async function mortalHint(g, p) {
+    const token = {};
+    UI.hintToken = token;
+    hintPanel(`<div class="hp-head"><b>${UI.advisorName}</b><span>${L('思考中…', 'Thinking…')}</span></div>`);
+    let info = null, err = null;
+    try {
+      info = MJ.Mjai.parseMeta(await UI.advisor.advise(0));
+      if (!info) err = L('Mortal 没有返回评价数据', 'Mortal returned no evaluation data');
+    } catch (e) {
+      err = String(e && e.message || e);
+    }
+    if (UI.hintToken !== token || UI.pending !== p) return; // 已经做出决定或换了局面
+    if (err) {
+      toast(L('Mortal 提示失败：' + err + '，改用内置 AI', 'Mortal hint failed: ' + err + '. Using the built-in AI instead'), 5000);
+      clearHint();
+      return builtinHint(g, p);
+    }
+    const items = info.items;
+    const best = items[0];
+    const shown = items.slice(0, 8);
+    const rest = items.length - shown.length;
+    const rows = shown.map((it, i) => {
+      const lab = actionLabel(it, p);
+      return `<div class="hp-row${i === 0 ? ' best' : ''}"><span class="hp-lab">${lab.html}</span>` +
+        `<span class="hp-bar"><i style="width:${Math.max(1.5, it.p * 100).toFixed(1)}%"></i></span>` +
+        `<span class="hp-p">${pctText(it.p)}</span><span class="hp-q" title="${L('Q 值', 'Q value')}">${it.q.toFixed(2)}</span></div>`;
+    }).join('');
+    const sub = info.shanten != null && info.shanten >= 0 ? `${info.shanten ? L(info.shanten + ' 向听', info.shanten + '-shanten') : L('听牌', 'Tenpai')}${info.furiten ? L(' · 振听', ' · Furiten') : ''}` : '';
+    hintPanel(`<div class="hp-head"><b>${UI.advisorName}</b><span>${sub}</span></div>${rows}` +
+      (rest > 0 ? `<div class="hp-more">${L(`另有 ${rest} 个选项，合计`, `${rest} more option${rest > 1 ? 's' : ''}, total`)} ${pctText(items.slice(8).reduce((a, x) => a + x.p, 0))}</div>` : '') +
+      `<div class="hp-note">${L('百分比 = 对合法操作的 Q 值做 softmax，表示 AI 的倾向，仅供参考', 'Percent = softmax of the Q values of legal actions. It shows what the AI leans towards; treat it as a hint.')}</div>`);
+    // 手牌上标出每张可打牌的倾向（太小的不标，免得挤在一起；完整列表看面板）
+    for (const it of items) {
+      if (!it.tile || (it.p < 0.005 && it !== best)) continue;
+      for (const el of $$('#my-hand .tile')) {
+        const id = +el.dataset.id;
+        if (typeOf(id) !== it.tile.t || MJ.isRed(id) !== it.tile.red || el.classList.contains('dim')) continue;
+        el.dataset.p = pctText(it.p);
+        if (it === best) el.classList.add('hint', 'p-best');
+      }
+    }
+    if (!best.tile) {
+      const key = actionLabel(best, p).key;
+      if (key) flashAction(key);
+    }
+  }
+
+  function builtinHint(g, p) {
+    if (p.kind === 'turn') {
+      // 列出向听数最小的几种打法及进张数
+      const hand = g.hands[0];
+      const cands = MJ.AI.analyze(hand, g.melds[0].length, MJ.AI.planOf(g, 0, counts(hand), g.melds[0]), MJ.AI.remaining(g, 0), new Set(p.opt.discards.map(typeOf)));
+      cands.sort((a, b) => a.s - b.s || b.uke - a.uke);
+      const rows = cands.slice(0, 5).map((c, i) => `<div class="hp-row plain${i === 0 ? ' best' : ''}"><span class="hp-lab"><span class="hl-tile">${R.tileHTMLByType(c.t, false)}</span><span>${L('打', 'discard')}</span></span>` +
+        `<span class="hp-info">${c.s <= 0 ? L('听牌', 'Tenpai') : L(c.s + ' 向听', c.s + '-shanten')} · ${L(`进张 ${c.uke} 张`, `${c.uke} ukeire`)}</span></div>`).join('');
+      if (rows) hintPanel(`<div class="hp-head"><b>${L('内置 AI', 'Built-in AI')}</b><span>${L('牌效参考', 'Tile efficiency')}</span></div>` + rows + `<div class="hp-note">${L('发光的牌是内置 AI 综合牌效、打点与安全度后的选择', 'The glowing tile is the built-in AI\'s pick, weighing efficiency, value and safety')}</div>`);
+    }
+    const flash = flashAction;
     if (p.kind === 'turn') {
       const a = MJ.AI.decideTurn(g, 0, p.opt);
       if (a.type === 'tsumo') flash('tsumo');
@@ -439,7 +554,7 @@
       $('#my-hand').innerHTML = '';
       renderCenter();
       renderDora();
-      banner(WIND[g.roundWind] + NUM[g.kyoku % 4] + '局', g.honba ? g.honba + ' 本场' : g.dealer === 0 ? '你是亲家' : SEAT[g.dealer] + '坐庄');
+      banner(roundTitle(g), g.honba ? L(g.honba + ' 本场', g.honba + ' honba') : g.dealer === 0 ? L('你是亲家', 'You are the dealer') : L(SEAT[g.dealer] + '坐庄', `${SEAT[g.dealer]} is the dealer`));
       await sleep(650);
       Sound.play('deal');
       for (let s = 1; s < 4; s++) renderOppHand(s, { deal: true });
@@ -473,7 +588,7 @@
         from = src.getBoundingClientRect();
       }
       if (d.riichi) {
-        bubble(seat, '立直', 'riichi');
+        bubble(seat, L('立直', 'Riichi'), 'riichi');
         Sound.play('riichi');
         await sleep(480);
       }
@@ -504,7 +619,7 @@
 
     async call(d) {
       const g = UI.game;
-      const text = d.kind === 'chi' ? '吃' : d.kind === 'pon' ? '碰' : '杠';
+      const text = d.kind === 'chi' ? L('吃', 'Chi') : d.kind === 'pon' ? L('碰', 'Pon') : L('杠', 'Kan');
       bubble(d.seat, text);
       Sound.play('call');
       if (d.from !== d.seat) {
@@ -538,7 +653,7 @@
       $('#waits').classList.remove('show');
       $$('.plate.active').forEach((p) => p.classList.remove('active'));
       for (const r of d.results) {
-        bubble(r.seat, r.tsumo ? '自摸' : '荣', 'win');
+        bubble(r.seat, r.tsumo ? L('自摸', 'Tsumo') : L('荣', 'Ron'), 'win');
         if (r.seat !== 0) renderOppHand(r.seat, { reveal: true });
       }
       Sound.play('win');
@@ -557,7 +672,7 @@
       UI.pending = null;
       clearActions();
       $$('.plate.active').forEach((p) => p.classList.remove('active'));
-      banner(d.nagashi && d.nagashi.length ? '流局满贯' : '流局', '荒牌流局');
+      banner(d.nagashi && d.nagashi.length ? L('流局满贯', 'Nagashi Mangan') : L('流局', 'Draw'), L('荒牌流局', 'Exhaustive draw'));
       Sound.play('draw-end');
       for (let s = 1; s < 4; s++) if (d.tenpai[s]) renderOppHand(s, { reveal: true });
       await sleep(1400);
@@ -572,19 +687,19 @@
       $$('.plate.active').forEach((p) => p.classList.remove('active'));
       const info = ABORT[d.kind];
       if (d.kind === 'kyuushu' && d.seat !== 0) renderOppHand(d.seat, { reveal: true });
-      if (d.kind === 'kyuushu') bubble(d.seat, '流局');
-      banner(info.name, '途中流局');
+      if (d.kind === 'kyuushu') bubble(d.seat, L('流局', 'Draw'));
+      banner(info.name, L('途中流局', 'Abortive draw'));
       Sound.play('draw-end');
       await sleep(1400);
       const g = UI.game;
       let who = '';
-      if (d.kind === 'kyuushu') who = `${WIND[g.seatWind(d.seat)]}家 · ${SEAT[d.seat]}宣告。`;
-      if (d.kind === 'sanchahou') who = `${d.seats.map((s) => SEAT[s]).join('、')}同时荣和${SEAT[d.from]}的舍牌。`;
-      const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${info.name}</span><span class="sub">途中流局 · 不计点数，本场 +1，亲家连庄</span></div>` +
+      if (d.kind === 'kyuushu') who = L(`${whoLabel(g.seatWind(d.seat), d.seat)}宣告。`, `Declared by ${whoLabel(g.seatWind(d.seat), d.seat)}. `);
+      if (d.kind === 'sanchahou') who = L(`${d.seats.map((s) => SEAT[s]).join('、')}同时荣和${SEAT[d.from]}的舍牌。`, `${d.seats.map((s) => SEAT[s]).join(', ')} all called ron on ${SEAT[d.from]}'s discard. `);
+      const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${info.name}</span><span class="sub">${L('途中流局 · 不计点数，本场 +1，亲家连庄', 'Abortive draw · no points change, honba +1, the dealer repeats')}</span></div>` +
         `<p class="abort-why">${who}${info.desc}</p>` +
         (d.kind === 'kyuushu' ? `<div class="win-hand"><div class="closed">${MJ.sortIds(g.hands[d.seat]).map((id) => R.tileHTML(id)).join('')}</div></div>` : '') +
         deltasHTML(g, d.before, d.after) +
-        '<div class="btn-row"><button class="btn primary" data-a="next">继续</button></div>';
+        `<div class="btn-row"><button class="btn primary" data-a="next">${L('继续', 'Continue')}</button></div>`;
       await waitModal(modal(html));
       renderCenter();
     },
@@ -596,11 +711,11 @@
   };
 
   const ABORT = {
-    kyuushu: { name: '九种九牌', desc: '第一巡、无人鸣牌时，手里有九种以上的幺九牌，可以宣告流局。' },
-    suufon: { name: '四风连打', desc: '第一巡四家打出了同一种风牌。' },
-    suucha: { name: '四家立直', desc: '四家全部立直。' },
-    suukaikan: { name: '四杠散了', desc: '两家以上合计开了四个杠。' },
-    sanchahou: { name: '三家和了', desc: '三家同时荣和同一张牌。' },
+    kyuushu: { name: L('九种九牌', 'Nine Terminals'), desc: L('第一巡、无人鸣牌时，手里有九种以上的幺九牌，可以宣告流局。', 'On the first go-around with no calls, a hand holding nine or more different terminals and honors may declare a draw.') },
+    suufon: { name: L('四风连打', 'Four Winds'), desc: L('第一巡四家打出了同一种风牌。', 'All four players discarded the same wind on the first go-around.') },
+    suucha: { name: L('四家立直', 'Four Riichi'), desc: L('四家全部立直。', 'All four players declared riichi.') },
+    suukaikan: { name: L('四杠散了', 'Four Kans'), desc: L('两家以上合计开了四个杠。', 'Four kans were made by two or more players.') },
+    sanchahou: { name: L('三家和了', 'Triple Ron'), desc: L('三家同时荣和同一张牌。', 'Three players called ron on the same tile.') },
   };
 
   // ------------------------------------------------------------ 结算弹层
@@ -623,7 +738,7 @@
 
   function winHandHTML(r) {
     let h = '<div class="closed">' + r.hand.map((id) => R.tileHTML(id)).join('') + '</div>';
-    h += `<div class="wt" data-lab="${r.tsumo ? '自摸' : '荣和'}">${R.tileHTML(r.winTile)}</div>`;
+    h += `<div class="wt" data-lab="${r.tsumo ? L('自摸', 'Tsumo') : L('荣和', 'Ron')}">${R.tileHTML(r.winTile)}</div>`;
     if (r.melds.length) h += '<div class="melds">' + r.melds.map((m) => R.meldHTML(m, r.seat)).join('') + '</div>';
     return h;
   }
@@ -631,30 +746,30 @@
   function showWinCard(r, before, after) {
     const g = UI.game;
     const res = r.res;
-    const who = `${WIND[r.seatWind]}家 · ${SEAT[r.seat]}`;
-    const fromTxt = r.tsumo ? '' : `<span class="sub">放铳：${WIND[g.seatWind(r.from)]}家 · ${SEAT[r.from]}</span>`;
+    const who = whoLabel(r.seatWind, r.seat);
+    const fromTxt = r.tsumo ? '' : `<span class="sub">${L('放铳：', 'Dealt in by ')}${whoLabel(g.seatWind(r.from), r.from)}</span>`;
     const yaku = res.yaku.map((y, i) =>
-      `<div class="yaku${y.dora ? ' dora' : ''}${y.yakuman ? ' ym' : ''}" style="--i:${i}"><span>${y.name}</span><b>${y.yakuman ? '役满' : y.han + ' 番'}</b></div>`).join('');
+      `<div class="yaku${y.dora ? ' dora' : ''}${y.yakuman ? ' ym' : ''}" style="--i:${i}"><span>${tr(y.name)}</span><b>${y.yakuman ? L('役满', 'Yakuman') : L(y.han + ' 番', y.han + ' han')}</b></div>`).join('');
     const pay = r.pay;
     let payDesc;
-    if (!r.tsumo) payDesc = `${SEAT[r.from]}支付 ${fmt(pay.total)}`;
-    else if (r.isDealer) payDesc = `三家各付 ${fmt(pay.all)}`;
-    else payDesc = `亲家付 ${fmt(pay.dealer)}，子家各付 ${fmt(pay.other)}`;
-    if (r.sticks) payDesc += `，另得供托 ${fmt(r.sticks * 1000)}`;
-    const doraRow = `<div class="dora-row"><div><span class="lab">宝牌指示</span><span class="set">${r.doraInd.map((id) => R.tileHTML(id)).join('')}</span></div>` +
-      (r.uraInd.length ? `<div><span class="lab">里宝牌指示</span><span class="set">${r.uraInd.map((id) => R.tileHTML(id)).join('')}</span></div>` : '') + '</div>';
+    if (!r.tsumo) payDesc = L(`${SEAT[r.from]}支付 ${fmt(pay.total)}`, `${SEAT[r.from]} pays ${fmt(pay.total)}`);
+    else if (r.isDealer) payDesc = L(`三家各付 ${fmt(pay.all)}`, `${fmt(pay.all)} from each player`);
+    else payDesc = L(`亲家付 ${fmt(pay.dealer)}，子家各付 ${fmt(pay.other)}`, `Dealer pays ${fmt(pay.dealer)}, others ${fmt(pay.other)} each`);
+    if (r.sticks) payDesc += L(`，另得供托 ${fmt(r.sticks * 1000)}`, `, plus ${fmt(r.sticks * 1000)} in riichi sticks`);
+    const doraRow = `<div class="dora-row"><div><span class="lab">${L('宝牌指示', 'Dora indicator')}</span><span class="set">${r.doraInd.map((id) => R.tileHTML(id)).join('')}</span></div>` +
+      (r.uraInd.length ? `<div><span class="lab">${L('里宝牌指示', 'Ura dora indicator')}</span><span class="set">${r.uraInd.map((id) => R.tileHTML(id)).join('')}</span></div>` : '') + '</div>';
     const lines = R.explain(res, r.isDealer, r.tsumo, r.honba);
     const html =
-      `<div class="win-head"><span class="win-kind">${r.tsumo ? '自摸' : '荣和'}</span><h2>${who}</h2>${fromTxt}</div>` +
+      `<div class="win-head"><span class="win-kind">${r.tsumo ? L('自摸', 'Tsumo') : L('荣和', 'Ron')}</span><h2>${who}</h2>${fromTxt}</div>` +
       `<div class="win-hand">${winHandHTML(r)}</div>${doraRow}` +
       `<div class="win-body"><div class="yaku-list">${yaku}</div><div>` +
-      `<div class="total"><span class="hf">${res.yakuman ? '' : res.fu + ' 符 ' + res.han + ' 番'}</span><span class="limit">${res.limit}</span></div>` +
-      `<div class="total"><span class="pts">${fmt(pay.total + (r.sticks || 0) * 1000)}<small>点</small></span></div>` +
+      `<div class="total"><span class="hf">${res.yakuman ? '' : L(res.fu + ' 符 ' + res.han + ' 番', res.fu + ' fu ' + res.han + ' han')}</span><span class="limit">${tr(res.limit)}</span></div>` +
+      `<div class="total"><span class="pts">${fmt(pay.total + (r.sticks || 0) * 1000)}<small>${L('点', 'pts')}</small></span></div>` +
       `<div class="paydesc">${payDesc}</div>` +
-      `<details class="explain" open><summary>这手牌的点数是怎么算的</summary><ol>${lines.map((l) => `<li>${l}</li>`).join('')}</ol></details>` +
+      `<details class="explain" open><summary>${L('这手牌的点数是怎么算的', 'How this hand was scored')}</summary><ol>${lines.map((l) => `<li>${l}</li>`).join('')}</ol></details>` +
       '</div></div>' +
       deltasHTML(g, before, after) +
-      '<div class="btn-row"><button class="btn" data-a="tut">点数教程</button><button class="btn primary" data-a="next">继续</button></div>';
+      `<div class="btn-row"><button class="btn" data-a="tut">${L('点数教程', 'Scoring tutorial')}</button><button class="btn primary" data-a="next">${L('继续', 'Continue')}</button></div>`;
     return waitModal(modal(html));
   }
 
@@ -665,27 +780,28 @@
       let extra = '';
       if (d.tenpai[s]) {
         const w = MJ.waits(counts(g.hands[s]), g.melds[s].length);
-        extra = `<span class="sub">听</span><span class="hand">${w.map((t) => R.tileHTMLByType(t, false)).join('')}</span>`;
+        extra = `<span class="sub">${L('听', 'Waits')}</span><span class="hand">${w.map((t) => R.tileHTMLByType(t, false)).join('')}</span>`;
       }
       rows += `<div data-seat="${s}" class="tenpai-row"><span><b style="color:var(--gold);font-family:var(--kai)">${WIND[g.seatWind(s)]}</b> ${SEAT[s]}</span>` +
-        `<span class="st ${d.tenpai[s] ? 'yes' : 'no'}">${d.tenpai[s] ? '听牌' : '未听'}</span>${extra}</div>`;
+        `<span class="st ${d.tenpai[s] ? 'yes' : 'no'}">${d.tenpai[s] ? L('听牌', 'Tenpai') : L('未听', 'Noten')}</span>${extra}</div>`;
     }
     const n = d.tenpai.filter(Boolean).length;
-    let note = n === 0 || n === 4 ? '无人支付罚符' : '未听牌者共付 3000 点，由听牌者平分';
+    let note = n === 0 || n === 4 ? L('无人支付罚符', 'No noten penalty') : L('未听牌者共付 3000 点，由听牌者平分', 'Noten players pay 3,000 in total, split among tenpai players');
     if (d.nagashi && d.nagashi.length) {
-      note = d.nagashi.map((s) => SEAT[s]).join('、') + ' 流局满贯（舍牌全是幺九且未被鸣走），按满贯自摸收点，不计不听罚符';
+      note = L(d.nagashi.map((s) => SEAT[s]).join('、') + ' 流局满贯（舍牌全是幺九且未被鸣走），按满贯自摸收点，不计不听罚符',
+        d.nagashi.map((s) => SEAT[s]).join(', ') + ': Nagashi Mangan (every discard a terminal or honor, none called). Paid as a mangan tsumo; no noten penalty');
       for (const s of d.nagashi) rows = rows.replace(`data-seat="${s}" class="tenpai-row"`, `data-seat="${s}" class="tenpai-row nagashi"`);
     }
-    const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${d.nagashi && d.nagashi.length ? '流局满贯' : '流局'}</span><span class="sub">${note}${d.tenpai[g.dealer] ? ' · 亲家听牌连庄' : ' · 亲家未听，轮庄'}</span></div>` +
+    const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${d.nagashi && d.nagashi.length ? L('流局满贯', 'Nagashi Mangan') : L('流局', 'Draw')}</span><span class="sub">${note}${d.tenpai[g.dealer] ? L(' · 亲家听牌连庄', ' · Dealer tenpai, dealer repeats') : L(' · 亲家未听，轮庄', ' · Dealer noten, deal passes')}</span></div>` +
       rows + deltasHTML(g, d.before, d.after) +
-      '<div class="btn-row"><button class="btn primary" data-a="next">继续</button></div>';
+      `<div class="btn-row"><button class="btn primary" data-a="next">${L('继续', 'Continue')}</button></div>`;
     return waitModal(modal(html));
   }
 
   function showEndCard(d) {
     const g = UI.game;
     const place = d.ranking.indexOf(0) + 1;
-    const title = ['一位！漂亮的胜利', '二位，稳稳连对', '三位，再接再厉', '四位，下次翻盘'][place - 1];
+    const title = L(['一位！漂亮的胜利', '二位，稳稳连对', '三位，再接再厉', '四位，下次翻盘'], ['1st place! A fine win', '2nd place, solid', '3rd place, keep going', '4th place, next time'])[place - 1];
     const r = g.rules;
     const goal = Math.max(r.goalPoints, r.startPoints);
     const uma = MJ.UMA[r.uma] || MJ.UMA.none;
@@ -695,8 +811,8 @@
     d.ranking.forEach((s, i) => {
       const p = d.points[s];
       const parts = [`(${fmt(d.scores[s])} − ${fmt(goal)}) ÷ 1000`];
-      if (uma[i]) parts.push(`马 ${uma[i] > 0 ? '+' : '−'}${Math.abs(uma[i])}`);
-      if (i === 0 && oka) parts.push(`返点差 +${oka}`);
+      if (uma[i]) parts.push(`${L('马', 'uma')} ${uma[i] > 0 ? '+' : '−'}${Math.abs(uma[i])}`);
+      if (i === 0 && oka) parts.push(`${L('返点差', 'oka')} +${oka}`);
       rows += `<div class="rank-row${s === 0 ? ' me' : ''}" style="--i:${i}"><span class="no">${i + 1}</span><span>${SEAT[s]}</span>` +
         `<span class="sc">${fmt(d.scores[s])}</span><span class="fp ${p > 0 ? 'up' : p < 0 ? 'down' : ''}" title="${parts.join(' ＋ ')}">${signed(p)}</span></div>`;
     });
@@ -705,19 +821,21 @@
     if (rec) {
       const st = rec.stats;
       const n = MJ.Records.list().length;
-      mine = `<div class="end-mine"><span>本场：${st.hands} 局 · 和了 ${st.win} · 放铳 ${st.dealin} · 立直 ${st.riichi} · 副露 ${st.open}</span>` +
-        `<span class="muted">已存入战绩（共 ${n} 场）</span></div>`;
+      mine = `<div class="end-mine"><span>${L(`本场：${st.hands} 局 · 和了 ${st.win} · 放铳 ${st.dealin} · 立直 ${st.riichi} · 副露 ${st.open}`, `This game: ${st.hands} hands · ${st.win} wins · ${st.dealin} deal-ins · ${st.riichi} riichi · ${st.open} open`)}</span>` +
+        `<span class="muted">${L(`已存入战绩（共 ${n} 场）`, `Saved to your records (${n} games)`)}</span></div>`;
     }
-    const umaTxt = uma[0] ? `顺位马 ${MJ.Records.umaLabel(r.uma)}` : '无顺位马';
-    const html = `<div class="win-head"><span class="win-kind">终局</span><h2>${title}</h2>` +
-      `<span class="sub">得点 = (点数 − 返点 ${fmt(goal)}) ÷ 1000 + ${umaTxt}${oka ? `，一位另得返点差 +${oka}` : ''}</span></div>${rows}${mine}` +
-      '<div class="btn-row"><button class="btn" data-a="stats">战绩与数据</button><button class="btn" data-a="menu">返回主菜单</button><button class="btn primary" data-a="again">再来一局</button></div>';
+    const umaTxt = uma[0] ? L(`顺位马 ${MJ.Records.umaLabel(r.uma)}`, `uma ${MJ.Records.umaLabel(r.uma)}`) : L('无顺位马', 'no uma');
+    const html = `<div class="win-head"><span class="win-kind">${L('终局', 'Game over')}</span><h2>${title}</h2>` +
+      `<span class="sub">${L(`得点 = (点数 − 返点 ${fmt(goal)}) ÷ 1000 + ${umaTxt}${oka ? `，一位另得返点差 +${oka}` : ''}`, `Final = (score − ${fmt(goal)} return) ÷ 1000 + ${umaTxt}${oka ? `; 1st also gets oka +${oka}` : ''}`)}</span></div>${rows}${mine}` +
+      '<div class="btn-row">' + (rec && rec.paifu ? `<button class="btn" data-a="replay">${L('查看牌谱', 'Replay game')}</button>` : '') +
+      `<button class="btn" data-a="stats">${L('战绩与数据', 'Records & stats')}</button><button class="btn" data-a="menu">${L('返回主菜单', 'Main menu')}</button><button class="btn primary" data-a="again">${L('再来一局', 'Play again')}</button></div>`;
     const m = modal(html);
     Sound.play(place <= 2 ? 'win' : 'draw-end');
     return new Promise((resolve) => {
       m.addEventListener('click', (e) => {
         const a = e.target.dataset && e.target.dataset.a;
         if (a === 'stats') MJ.Records.open();
+        else if (a === 'replay') Promise.resolve(UI.tracker && UI.tracker.paifuSaved).then(() => MJ.Replay.open(rec));
         else if (a === 'menu') {
           resolve();
           showMenu();
@@ -761,21 +879,41 @@
     const human = {
       onTurn: (g, seat, opt) => promptTurn(g, opt),
       onCall: (g, seat, o) => promptCall(g, o),
+      // 别家已经宣言了优先级更高的鸣牌（如碰 > 吃），撤回自己的鸣牌提示
+      cancelCall: () => {
+        const p = UI.pending;
+        if (p && p.kind === 'call') p.done({ type: 'pass' });
+      },
     };
     const delay = (kind) => sleep(kind === 'turn' ? (fast ? 120 + Math.random() * 120 : 300 + Math.random() * 360) : fast ? 80 : 180);
     const builtin = () => new MJ.AI.AIAgent({ delay });
 
     let useMortal = rules.ai === 'mortal';
     let engineName = 'Mortal';
+    let bridgeOk = false;
     if (useMortal) {
-      toast('正在连接 Mortal…', 2500);
+      toast(L('正在连接 Mortal…', 'Connecting to Mortal…'), 2500);
       const p = await MJ.Mjai.ping(rules.mortalUrl);
       if (!p.ok) {
         useMortal = false;
-        toast('连不上 Mortal 桥接程序（' + (p.error || '未知错误') + '），本局改用内置 AI', 6000);
+        toast(L('连不上 Mortal 桥接程序（' + (p.error || '未知错误') + '），本局改用内置 AI', 'Cannot reach the Mortal bridge (' + (p.error || 'unknown error') + '). Using the built-in AI this game'), 6000);
       } else {
+        bridgeOk = true;
         engineName = p.engine || 'Mortal';
-        toast('对手：' + engineName, 2500);
+        toast(L('对手：', 'Opponents: ') + engineName, 2500);
+      }
+    }
+    // 「策」提示：跟随对手，或单独指定 Mortal
+    let hintMortal = rules.hintAi === 'mortal' || (rules.hintAi === 'auto' && useMortal);
+    if (hintMortal && !bridgeOk) {
+      if (rules.ai === 'mortal') hintMortal = false; // 刚才已经连不上
+      else {
+        const p = await MJ.Mjai.ping(rules.mortalUrl);
+        if (p.ok) engineName = p.engine || 'Mortal';
+        else {
+          hintMortal = false;
+          toast(L('连不上 Mortal 桥接程序，「策」提示改用内置 AI', 'Cannot reach the Mortal bridge; hints will use the built-in AI'), 5000);
+        }
       }
     }
 
@@ -787,16 +925,20 @@
         if (handlers[type]) await handlers[type](d);
       },
     });
+    // 完整事件记录：既是保存下来的牌谱，也是发给 Mortal 的输入
+    const log = new MJ.Mjai.MjaiLog(game);
+    const session = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    UI.advisor = hintMortal ? new MJ.Mjai.MjaiAdvisor({ url: rules.mortalUrl, log, session }) : null;
+    UI.advisorName = engineName;
+    UI.rules = rules;
     if (useMortal) {
-      const log = new MJ.Mjai.MjaiLog(game);
-      const session = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       let warned = false;
       for (let s = 1; s < 4; s++) {
         const a = new MJ.Mjai.MjaiAgent({
           url: rules.mortalUrl, log, session, fallback: builtin(),
           onError: (msg) => {
             console.warn('Mortal seat ' + s + ':', msg);
-            if (!warned) toast('Mortal 出错，已换回内置 AI：' + msg, 7000);
+            if (!warned) toast(L('Mortal 出错，已换回内置 AI：', 'Mortal failed, switched back to the built-in AI: ') + msg, 7000);
             warned = true;
             $('#ai-badge').classList.add('bad');
           },
@@ -813,10 +955,10 @@
       for (let i = 1; i < 4; i++) agents.push(builtin());
     }
     const badge = $('#ai-badge');
-    badge.textContent = useMortal ? engineName : '内置 AI';
+    badge.textContent = useMortal ? engineName : L('内置 AI', 'Built-in AI');
     badge.className = useMortal ? 'mortal' : '';
 
-    UI.tracker = MJ.Records.track(game, { ai: useMortal ? engineName : '内置 AI', rules: MJ.Settings.summary(true) });
+    UI.tracker = MJ.Records.track(game, { ai: useMortal ? engineName : '内置 AI', rules: MJ.Settings.summary(true, null, 'zh'), ruleSet: MJ.Settings.rules, log });
     UI.game = game;
     UI.pending = null;
     clearActions();
@@ -825,7 +967,7 @@
     $('#waits').classList.remove('show');
     game.run().catch((err) => {
       console.error(err);
-      modal(`<h2>出错了</h2><p class="sub">${String(err && err.message || err)}</p><div class="btn-row"><button class="btn primary" onclick="location.reload()">重新载入</button></div>`);
+      modal(`<h2>${L('出错了', 'Something went wrong')}</h2><p class="sub">${String(err && err.message || err)}</p><div class="btn-row"><button class="btn primary" onclick="location.reload()">${L('重新载入', 'Reload')}</button></div>`);
     });
   }
 
@@ -841,18 +983,19 @@
     $('#menu').innerHTML =
       '<div class="bg"></div><div class="inner">' +
       `<div class="deco">${deco}</div>` +
-      '<h1>雀庭</h1><div class="tag">立直麻将 · 四人对局</div>' +
+      `<h1>雀庭</h1><div class="tag">${L('立直麻将 · 四人对局', 'Riichi Pavilion · 4-player riichi mahjong')}</div>` +
       '<div class="modes">' +
-      '<button class="mode" data-len="east"><b>东风战</b><span>一圈四局，约十分钟<br>适合快速来一把</span></button>' +
-      '<button class="mode" data-len="south"><b>半庄战</b><span>东南两圈八局<br>标准的完整对局</span></button>' +
-      '<button class="mode learn" data-len="tut"><b>点数教程</b><span>符、番、点数表<br>例题与随机练习</span></button>' +
+      `<button class="mode" data-len="east"><b>${L('东风战', 'East game')}</b><span>${L('一圈四局，约十分钟<br>适合快速来一把', 'One round of four hands<br>about ten minutes')}</span></button>` +
+      `<button class="mode" data-len="south"><b>${L('半庄战', 'Hanchan')}</b><span>${L('东南两圈八局<br>标准的完整对局', 'East and South rounds<br>the standard full game')}</span></button>` +
+      `<button class="mode learn" data-len="tut"><b>${L('点数教程', 'Scoring tutorial')}</b><span>${L('符、番、点数表<br>例题与随机练习', 'Fu, han, score tables<br>examples and practice')}</span></button>` +
       '</div>' +
       '<div class="menu-links">' +
-      '<button class="rules-link" data-len="rules"><b>规则设置</b><span class="rule-sum"></span></button>' +
-      '<button class="rules-link" data-len="stats"><b>战绩与数据</b><span class="stat-sum"></span></button>' +
+      `<button class="rules-link" data-len="rules"><b>${L('规则设置', 'Rules')}</b><span class="rule-sum"></span></button>` +
+      `<button class="rules-link" data-len="stats"><b>${L('战绩与数据', 'Records & stats')}</b><span class="stat-sum"></span></button>` +
       '</div>' +
-      '<div class="foot">全部资源本地生成，可离线游玩</div>' +
-      '</div>';
+      `<div class="foot">${L('全部资源本地生成，可离线游玩', 'Everything is generated locally and works offline')}</div>` +
+      '</div>' +
+      `<button class="lang-switch" data-len="lang" title="${L('切换语言', 'Switch language')}"><b class="${EN ? '' : 'on'}">中文</b><b class="${EN ? 'on' : ''}">English</b></button>`;
     $('#menu').classList.add('show');
     refreshMenu();
   }
@@ -863,10 +1006,11 @@
     const st = $('#menu .stat-sum');
     if (st) {
       const recs = MJ.Records.list();
-      if (!recs.length) st.textContent = '还没有对局记录';
+      if (!recs.length) st.textContent = L('还没有对局记录', 'No games recorded yet');
       else {
         const sm = MJ.Records.summarize(recs);
-        st.textContent = `${sm.games} 场 · 平均顺位 ${sm.avgRank.toFixed(2)} · 累计 ${MJ.Records.signed(sm.pt)} · 和了率 ${(sm.rate.win * 100).toFixed(1)}%`;
+        st.textContent = L(`${sm.games} 场 · 平均顺位 ${sm.avgRank.toFixed(2)} · 累计 ${MJ.Records.signed(sm.pt)} · 和了率 ${(sm.rate.win * 100).toFixed(1)}%`,
+          `${sm.games} games · avg place ${sm.avgRank.toFixed(2)} · total ${MJ.Records.signed(sm.pt)} · win rate ${(sm.rate.win * 100).toFixed(1)}%`);
       }
     }
   }
@@ -881,11 +1025,12 @@
     $('#my-hand').addEventListener('mouseover', onHandOver);
     $('#my-hand').addEventListener('mouseleave', onHandOut);
     $('#menu').addEventListener('click', (e) => {
-      const b = e.target.closest('.mode, .rules-link');
+      const b = e.target.closest('.mode, .rules-link, .lang-switch');
       if (!b) return;
       Sound.unlock();
       Sound.play('click');
-      if (b.dataset.len === 'tut') MJ.Tutorial.open();
+      if (b.dataset.len === 'lang') MJ.setLang(EN ? 'zh' : 'en');
+      else if (b.dataset.len === 'tut') MJ.Tutorial.open();
       else if (b.dataset.len === 'rules') MJ.Settings.open();
       else if (b.dataset.len === 'stats') MJ.Records.open();
       else startGame(b.dataset.len);
@@ -911,8 +1056,8 @@
       Sound.play('click');
       if (!UI.game || UI.game.over) return showMenu();
       const box = document.createElement('div');
-      box.innerHTML = '<div class="overlay" style="z-index:110"><div class="card" style="width:min(420px,100%)"><h2>回到主菜单？</h2><p class="sub">当前对局不会保存。</p>' +
-        '<div class="btn-row"><button class="btn" data-a="no">继续对局</button><button class="btn primary" data-a="yes">回到主菜单</button></div></div></div>';
+      box.innerHTML = `<div class="overlay" style="z-index:110"><div class="card" style="width:min(420px,100%)"><h2>${L('回到主菜单？', 'Back to the main menu?')}</h2><p class="sub">${L('当前对局不会保存。', 'This game will not be saved.')}</p>` +
+        `<div class="btn-row"><button class="btn" data-a="no">${L('继续对局', 'Keep playing')}</button><button class="btn primary" data-a="yes">${L('回到主菜单', 'Main menu')}</button></div></div></div>`;
       const ov = box.firstChild;
       $('#app').appendChild(ov);
       ov.addEventListener('click', (e) => {

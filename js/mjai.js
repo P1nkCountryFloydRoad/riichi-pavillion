@@ -7,6 +7,7 @@
 (function (root) {
   'use strict';
   const MJ = root.MJ;
+  const L = (zh, en) => (MJ.L ? MJ.L(zh, en) : zh);
   const { typeOf, isRed } = MJ;
 
   const HONOR = ['E', 'S', 'W', 'N', 'P', 'F', 'C'];
@@ -156,7 +157,7 @@
       const j = await res.json();
       return { ok: !!j.ok, engine: j.engine || 'mjai', error: j.error };
     } catch (e) {
-      return { ok: false, error: e && e.name === 'AbortError' ? '连接超时' : String(e && e.message || e) };
+      return { ok: false, error: e && e.name === 'AbortError' ? L('连接超时', 'connection timed out') : String(e && e.message || e) };
     }
   }
 
@@ -212,16 +213,16 @@
       try {
         let r = await this.send(seat, null, true);
         if (r && r.type === 'reach') {
-          if (!opt.riichi.length) throw new Error('机器人在不能立直时宣言了立直');
+          if (!opt.riichi.length) throw new Error(L('机器人在不能立直时宣言了立直', 'the bot declared riichi when riichi was not allowed'));
           this.skipReach = true;
           r = await this.send(seat, [{ type: 'reach', actor: seat }], true);
           const a = this.mapTurn(g, seat, opt, r);
           if (a && a.type === 'discard' && opt.riichi.includes(typeOf(a.tile))) return Object.assign(a, { riichi: true });
-          throw new Error('立直后的打牌不合法：' + JSON.stringify(r));
+          throw new Error(L('立直后的打牌不合法：', 'illegal discard after riichi: ') + JSON.stringify(r));
         }
         const a = this.mapTurn(g, seat, opt, r);
         if (a) return a;
-        throw new Error('无法理解的回应：' + JSON.stringify(r));
+        throw new Error(L('无法理解的回应：', 'unrecognized reply: ') + JSON.stringify(r));
       } catch (e) {
         this.fail(e);
         return this.fallback.onTurn(g, seat, opt);
@@ -271,7 +272,7 @@
             o.chi.find((p) => typeOf(p[0]) === typeOf(a) && typeOf(p[1]) === typeOf(b));
           if (pair) return { type: 'chi', tiles: pair };
         }
-        throw new Error('无法理解的回应：' + JSON.stringify(r));
+        throw new Error(L('无法理解的回应：', 'unrecognized reply: ') + JSON.stringify(r));
       } catch (e) {
         this.fail(e);
         return this.fallback.onCall(g, seat, o);
@@ -279,5 +280,57 @@
     }
   }
 
-  MJ.Mjai = { toMjai, fromMjai, pickId, MjaiLog, MjaiAgent, ping };
+  // ------------------------------------------------------------ 提示（座位 0 的 Mortal 顾问）
+  /**
+   * 不替玩家行动，只在玩家点「策」时把当前局面发给座位 0 的 Mortal，拿回它对每个合法操作的评价。
+   * 与对手共用同一份事件记录与会话；同一决策点重复询问时直接用缓存。
+   */
+  class MjaiAdvisor extends MjaiAgent {
+    constructor(opts) {
+      super(opts);
+      this.cache = null;
+      this.busy = null;
+    }
+
+    async advise(seat) {
+      const n = this.log.events.length;
+      if (this.cache && this.cache.n === n) return this.cache.r;
+      if (this.busy && this.busy.n === n) return this.busy.p;
+      const p = this.send(seat, null, true).then((r) => {
+        this.cache = { n, r };
+        return r;
+      }).finally(() => { if (this.busy && this.busy.n === n) this.busy = null; });
+      this.busy = { n, p };
+      return p;
+    }
+  }
+
+  /**
+   * 把 Mortal 回应里的 meta（mask_bits + 压缩的 q_values）展开成选项列表，按倾向从高到低排序。
+   * 倾向 = 对合法操作的 Q 值做 softmax，和 Mortal 牌谱复盘里的百分比是同一种算法。
+   * 动作编号：0–33 打出普通牌，34–36 打出赤五万/筒/索，37 立直，38–40 吃（被吃的牌在低/中/高位），
+   * 41 碰，42 杠，43 和了，44 九种九牌，45 跳过。
+   */
+  function parseMeta(reaction) {
+    const m = reaction && reaction.meta;
+    if (!m || !Array.isArray(m.q_values) || m.mask_bits == null) return null;
+    const bits = BigInt(m.mask_bits);
+    const idx = [];
+    for (let i = 0; i < 46; i++) if ((bits >> BigInt(i)) & 1n) idx.push(i);
+    if (idx.length !== m.q_values.length) return null;
+    const qs = m.q_values;
+    const mx = Math.max(...qs);
+    const ex = qs.map((q) => Math.exp(q - mx));
+    const sum = ex.reduce((a, b) => a + b, 0);
+    const items = idx.map((a, k) => {
+      const it = { action: a, q: qs[k], p: ex[k] / sum };
+      if (a <= 33) it.tile = { t: a, red: false };
+      else if (a <= 36) it.tile = { t: (a - 34) * 9 + 4, red: true };
+      return it;
+    });
+    items.sort((x, y) => y.p - x.p);
+    return { items, shanten: m.shanten, furiten: m.at_furiten, chosen: reaction.type };
+  }
+
+  MJ.Mjai = { toMjai, fromMjai, pickId, MjaiLog, MjaiAgent, MjaiAdvisor, parseMeta, ping };
 })(typeof window !== 'undefined' ? window : globalThis);

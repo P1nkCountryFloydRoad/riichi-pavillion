@@ -3,7 +3,11 @@ const MJ = require('../js/core.js');
 require('../js/game.js');
 require('../js/ai.js');
 require('../js/store.js');
+require('../js/i18n.js');
+require('../js/paifu.js');
 require('../js/records.js');
+require('../js/mjai.js');
+require('../js/replay.js');
 const assert = require('assert');
 
 let pass = 0;
@@ -159,7 +163,128 @@ function mulberry(a) {
   console.log('final points: 4 cases ok');
 }
 
+// ------------------------------------------------------------ 鸣牌裁定：结果确定后立即结束
+async function callPriorityTests() {
+  const never = () => new Promise(() => {});
+  const o = (x) => Object.assign({ ron: false, pon: false, kan: false, chi: [] }, x);
+  const mk = (agents) => new MJ.Game({ agents, rules: {} });
+  // 1) 下家在考虑吃（永不回答），对家宣言碰 → 立即裁定为碰，并撤回下家的提示
+  let cancelled = [];
+  let g = mk([{}, { onCall: never, cancelCall: (gg, s) => cancelled.push(s) }, { onCall: async () => ({ type: 'pon' }) }, {}]);
+  let ans = await g.collectCalls([{ s: 1, o: o({ chi: [[0, 4]] }) }, { s: 2, o: o({ pon: true }) }]);
+  assert.strictEqual(ans[1].type, 'pon');
+  assert.ok(ans[0].cancelled && ans[0].type === 'pass');
+  assert.deepStrictEqual(cancelled, [1]);
+  // 2) 有人能荣和还没回答时，碰必须等待
+  let release;
+  g = mk([{}, { onCall: () => new Promise((r) => { release = r; }) }, { onCall: async () => ({ type: 'pon' }) }, {}]);
+  let done = false;
+  const p = g.collectCalls([{ s: 1, o: o({ ron: true }) }, { s: 2, o: o({ pon: true }) }]).then((x) => { done = true; return x; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(done, false, 'pon must wait for a pending ron');
+  release({ type: 'ron' });
+  ans = await p;
+  assert.deepStrictEqual(ans.map((x) => x.type), ['ron', 'pon']);
+  // 3) 吃已宣言，但能碰的人还没回答 → 等待；对方跳过后成立吃
+  g = mk([{}, { onCall: async () => ({ type: 'chi', tiles: [0, 4] }) }, { onCall: async () => { await new Promise((r) => setTimeout(r, 15)); return { type: 'pass' }; } }, {}]);
+  ans = await g.collectCalls([{ s: 1, o: o({ chi: [[0, 4]] }) }, { s: 2, o: o({ pon: true }) }]);
+  assert.deepStrictEqual(ans.map((x) => x.type), ['chi', 'pass']);
+  assert.ok(!ans[1].cancelled);
+  // 4) 双响：两家都能荣和时都要等到
+  g = mk([{}, { onCall: async () => ({ type: 'ron' }) }, { onCall: async () => { await new Promise((r) => setTimeout(r, 10)); return { type: 'ron' }; } }, {}]);
+  ans = await g.collectCalls([{ s: 1, o: o({ ron: true }) }, { s: 2, o: o({ ron: true }) }]);
+  assert.deepStrictEqual(ans.map((x) => x.type), ['ron', 'ron']);
+  console.log('call priority: 4 cases ok');
+}
+
+/** 牌谱：从保存的 mjai 事件流逐局重建，局数、每局结束点数都要和对局一致 */
+async function replayCheck(tr, start) {
+  const rec = tr.record;
+  assert.ok(rec.paifu, 'paifu flag');
+  await tr.paifuSaved;
+  const pf = await MJ.Paifu.get(rec.id);
+  assert.ok(pf && pf.events.length > 10, 'paifu stored');
+  const ev = pf.events;
+  assert.strictEqual(ev[0].type, 'start_game');
+  assert.strictEqual(ev[ev.length - 1].type, 'end_game');
+  const ky = MJ.Replay.splitKyoku(ev);
+  assert.strictEqual(ky.length, rec.log.length, 'kyoku count');
+  for (let k = 0; k < ky.length; k++) {
+    const st = MJ.Replay.stateAt(ev, ky[k], ky[k].end - ky[k].start);
+    const e = rec.log[k];
+    if (e.deltas) {
+      const startSc = ev[ky[k].start].scores;
+      // mjai 的 reach_accepted 当场扣 1000，战绩里的 deltas 不含立直棒
+      const sticks = [0, 0, 0, 0];
+      for (let i = ky[k].start; i <= ky[k].end; i++) if (ev[i].type === 'reach_accepted') sticks[ev[i].actor] += 1000;
+      for (let s = 0; s < 4; s++) assert.strictEqual(st.scores[s] - startSc[s], e.deltas[s] - sticks[s], `kyoku ${k} delta seat ${s}`);
+    }
+    if (k + 1 < ky.length) assert.deepStrictEqual(st.scores, ev[ky[k + 1].start].scores, 'scores carry to next kyoku');
+    // 手牌 + 副露 张数守恒
+    for (let s = 0; s < 4; s++) {
+      const n = st.hands[s].length + st.melds[s].reduce((a, m) => a + Math.min(3, m.consumed.length + (m.type === 'ankan' ? 0 : 1)), 0);
+      assert.ok(n === 13 || n === 14, `replay tile count kyoku ${k} seat ${s} = ${n}`);
+    }
+  }
+  const last = MJ.Replay.stateAt(ev, ky[ky.length - 1], 1e9);
+  assert.strictEqual(last.scores.reduce((a, b) => a + b, 0) + last.kyotaku * 1000, start * 4);
+  stats.replays++;
+}
+const stats = { replays: 0 };
+
+function i18nTests() {
+  assert.strictEqual(MJ.lang, 'zh', 'Node defaults to Chinese');
+  assert.strictEqual(MJ.tr('立直'), '立直');
+  MJ.lang = 'en';
+  try {
+    assert.strictEqual(MJ.tr('役牌 白'), 'Yakuhai Haku');
+    assert.strictEqual(MJ.tr('场风 东'), 'Round Wind East');
+    assert.strictEqual(MJ.tr('幺九暗刻'), 'Closed terminal triplet');
+    assert.strictEqual(MJ.L('中', 'en'), 'en');
+    assert.strictEqual(MJ.roundName(1, 3, 2), 'South 3 · 2 honba');
+    // core.js 里出现的所有役名、满贯名、符的项目都有英文（扫源码里的字面量）
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../js/core.js'), 'utf8');
+    const names = new Set();
+    for (const re of [/name: '([^']+)'/g, /label: '([^']+)'/g, /ym\.push\('([^']+)'\)/g, /sitYakuman\.push\('([^']+)'\)/g, /return '([^']+)'/g])
+      for (const m of src.matchAll(re)) names.add(m[1]);
+    for (const m of src.matchAll(/\[('[^\]]*役满'[^\]]*)\]/g)) for (const x of m[1].matchAll(/'([^']+)'/g)) names.add(x[1]);
+    for (const w of ['两面', '嵌张', '边张', '单骑', '双碰']) names.add(w + '听牌');
+    for (const y of ['幺九', '中张']) for (const o of ['明', '暗']) for (const k of ['刻', '杠']) names.add(y + o + k);
+    for (const w of ['东', '南', '西', '北']) { names.add('场风 ' + w); names.add('自风 ' + w); }
+    assert.ok(names.size > 50, 'scanned ' + names.size + ' terms');
+    const missing = [...names].filter((n) => /[\u4e00-\u9fa5]/.test(n) && /[\u4e00-\u9fa5]/.test(MJ.tr(n)));
+    assert.deepStrictEqual(missing, [], 'untranslated terms');
+  } finally { MJ.lang = 'zh'; }
+  console.log('i18n: ok');
+}
+
+function parseMetaTests() {
+  // 合法动作：打 1m(0)、打 5m 赤(34)、立直(37)、跳过不合法 → mask 位 0、34、37
+  const mask = (1n << 0n) | (1n << 34n) | (1n << 37n);
+  const r = MJ.Mjai.parseMeta({ type: 'reach', meta: { q_values: [1, 0, 2], mask_bits: mask.toString(), shanten: 0 } });
+  assert.deepStrictEqual(r.items.map((x) => x.action), [37, 0, 34]);
+  assert.ok(Math.abs(r.items.reduce((a, x) => a + x.p, 0) - 1) < 1e-9);
+  assert.deepStrictEqual(r.items[2].tile, { t: 4, red: true });
+  assert.strictEqual(r.chosen, 'reach');
+  assert.strictEqual(MJ.Mjai.parseMeta({ type: 'none' }), null);
+  assert.strictEqual(MJ.Mjai.parseMeta({ meta: { q_values: [1], mask_bits: '3' } }), null, 'length mismatch');
+  console.log('parseMeta: ok');
+}
+
+async function paifuStoreTests() {
+  await MJ.Paifu.put('a', { events: [1] });
+  assert.deepStrictEqual(await MJ.Paifu.get('a'), { events: [1] });
+  assert.strictEqual(await MJ.Paifu.get('nope'), null);
+  await MJ.Paifu.del('a');
+  assert.strictEqual(await MJ.Paifu.get('a'), null);
+  console.log('paifu store: ok');
+}
+
 (async () => {
+  await callPriorityTests();
+  parseMetaTests();
+  i18nTests();
+  await paifuStoreTests();
   const N = +process.argv[2] || 200;
   const VARIANTS = [
     {},
@@ -231,8 +356,10 @@ function mulberry(a) {
         }
       },
     });
-    const tr = MJ.Records.track(g, { ai: 'test' });
+    const log = i % 3 === 0 ? new MJ.Mjai.MjaiLog(g) : null;
+    const tr = MJ.Records.track(g, { ai: 'test', log });
     await g.run();
+    if (log) await replayCheck(tr, start);
     // 记录器统计与对局一致
     const rec = tr.record;
     assert.ok(rec, "record saved at game end");
@@ -242,9 +369,36 @@ function mulberry(a) {
     const me = rec.log.reduce((a, e) => a + (e.deltas ? e.deltas[0] : 0), 0);
     assert.ok(Math.abs(rec.score - start - me) <= 1000 * 8, 'seat 0 deltas roughly match final score (sticks)');
     assert.ok(rec.stats.win + rec.stats.dealin <= rec.stats.hands * 2);
+    // 和牌牌型：张数正确，且能用记法还原成同样的牌
+    for (const e of rec.log) {
+      if (e.type !== 'win') continue;
+      for (const w of e.wins) {
+        const sh = w.shape;
+        const n = MJ.parseTypes(sh.hand).length + MJ.parseTypes(sh.win).length +
+          sh.melds.reduce((a, m) => a + Math.min(3, MJ.parseTypes(m.tiles).length), 0);
+        assert.strictEqual(n, 14, 'shape tile count ' + sh.text);
+        assert.ok(sh.text.startsWith(sh.hand) && sh.text.endsWith(sh.win));
+        assert.strictEqual(MJ.parseTypes(sh.win).length, 1);
+      }
+    }
   }
   const all = MJ.Records.list();
   assert.strictEqual(all.length, Math.min(N, 300));
+  // 牌谱随战绩导出 / 导入，删除记录时一起删
+  const withPf = all.filter((r) => r.paifu);
+  assert.ok(withPf.length > 0);
+  const full = JSON.parse(JSON.stringify(await MJ.Records.exportAll()));
+  assert.strictEqual(Object.keys(full.paifu).length, withPf.length, 'exported paifu');
+  MJ.Records.clear();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual((await MJ.Paifu.keys()).length, 0, 'clear removes paifu');
+  const ri = await MJ.Records.importAll(full);
+  assert.strictEqual(ri.paifu, withPf.length, 'imported paifu');
+  MJ.Records.remove(withPf[0].id);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(await MJ.Paifu.get(withPf[0].id), null, 'remove deletes paifu');
+  MJ.Records.importData({ records: [withPf[0]] });
+  console.log(`  paifu: ${stats.replays} games replayed, export/import ${withPf.length}`);
   // 导出 → 清空 → 导入（再导入一次应全部跳过），汇总不变
   const dump = JSON.parse(JSON.stringify(MJ.Records.exportData()));
   const before = JSON.stringify(MJ.Records.summarize(all));

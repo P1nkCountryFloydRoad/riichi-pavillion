@@ -204,6 +204,55 @@
       return a === b && a.length > 0;
     }
 
+    /**
+     * 同时询问所有能鸣牌的玩家，按「荣和 > 碰 / 杠 > 吃」裁定。
+     * 一旦结果不可能再被尚未回答的玩家改变（他们能做的操作优先级都更低），立即结束，
+     * 并通知这些玩家撤回提示（agent.cancelCall），他们的回答记为跳过。
+     * 例：下家还在考虑吃，对家已经宣言碰 → 不必等下家，直接碰。
+     */
+    collectCalls(responders) {
+      const optRank = (o) => (o.ron ? 3 : o.pon || o.kan ? 2 : o.chi.length ? 1 : 0);
+      const ansRank = (a, o) => {
+        if (!a) return 0;
+        if (a.type === 'ron' && o.ron) return 3;
+        if ((a.type === 'pon' && o.pon) || (a.type === 'kan' && o.kan)) return 2;
+        if (a.type === 'chi' && o.chi.length) return 1;
+        return 0;
+      };
+      return new Promise((resolve, reject) => {
+        const answers = responders.map(() => null);
+        let finished = false;
+        const settle = () => {
+          if (finished) return;
+          let best = 0;
+          responders.forEach((r, i) => { if (answers[i]) best = Math.max(best, ansRank(answers[i], r.o)); });
+          const open = responders.filter((r, i) => !answers[i]);
+          if (!open.every((r) => optRank(r.o) < best)) return;
+          finished = true;
+          responders.forEach((r, i) => {
+            if (answers[i]) return;
+            answers[i] = { type: 'pass', cancelled: true };
+            const ag = this.agents[r.s];
+            if (ag && typeof ag.cancelCall === 'function') ag.cancelCall(this, r.s);
+          });
+          resolve(answers);
+        };
+        responders.forEach((r, i) => {
+          Promise.resolve()
+            .then(() => this.agents[r.s].onCall(this, r.s, r.o))
+            .then((a) => {
+              if (finished) return;
+              answers[i] = a || { type: 'pass' };
+              settle();
+            }, (e) => {
+              if (finished) return;
+              finished = true;
+              reject(e);
+            });
+        });
+      });
+    }
+
     callOptions(s, d, id) {
       const t = typeOf(id);
       const hand = this.hands[s];
@@ -367,7 +416,7 @@
         }
         let answers = [];
         if (responders.length) {
-          answers = await Promise.all(responders.map((r) => this.agents[r.s].onCall(this, r.s, r.o)));
+          answers = await this.collectCalls(responders);
           if (this.aborted) throw new Aborted();
         }
         let wins = [];

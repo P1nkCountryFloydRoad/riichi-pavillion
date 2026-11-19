@@ -202,35 +202,46 @@
 
   /** 生成一手和牌的逐步点数讲解（HTML 行数组） */
   function explain(res, isDealer, tsumo, honba) {
+    const L = MJ.L || ((zh) => zh);
+    const tr = MJ.tr || ((x) => x);
     const lines = [];
     const pay = MJ.calcPayments(res.base, isDealer, tsumo, 0);
     if (res.yakuman) {
-      lines.push(`<b>役满</b>${res.yakuman > 1 ? ' × ' + res.yakuman : ''}：不计符与番，基本点 = 8000${res.yakuman > 1 ? ' × ' + res.yakuman + ' = ' + fmt(res.base) : ''}`);
+      const times = res.yakuman > 1 ? ' × ' + res.yakuman + ' = ' + fmt(res.base) : '';
+      lines.push(L(`<b>役满</b>${res.yakuman > 1 ? ' × ' + res.yakuman : ''}：不计符与番，基本点 = 8000${times}`,
+        `<b>Yakuman</b>${res.yakuman > 1 ? ' × ' + res.yakuman : ''}: fu and han don't matter, base points = 8000${times}`));
     } else {
-      const parts = res.fuDetail.filter((d) => !d.round).map((d) => `${d.label} <b>${d.fu}</b>`);
+      const parts = res.fuDetail.filter((d) => !d.round).map((d) => `${tr(d.label)} <b>${d.fu}</b>`);
       const raw = res.fuDetail.filter((d) => !d.round).reduce((s, d) => s + d.fu, 0);
-      let fuLine = `<b>符</b>：${parts.join(' + ')}`;
-      if (res.form === 'chiitoi') fuLine = '<b>符</b>：七对子固定 <b>25</b> 符（不进位）';
-      else if (raw !== res.fu) fuLine += ` = ${raw} → 进位为 <b>${res.fu}</b> 符`;
-      else fuLine += ` = <b>${res.fu}</b> 符`;
+      let fuLine = `<b>${L('符', 'Fu')}</b>${L('：', ': ')}${parts.join(' + ')}`;
+      if (res.form === 'chiitoi') fuLine = L('<b>符</b>：七对子固定 <b>25</b> 符（不进位）', '<b>Fu</b>: chiitoitsu is a fixed <b>25</b> fu (not rounded)');
+      else if (raw !== res.fu) fuLine += L(` = ${raw} → 进位为 <b>${res.fu}</b> 符`, ` = ${raw} → rounded up to <b>${res.fu}</b> fu`);
+      else fuLine += L(` = <b>${res.fu}</b> 符`, ` = <b>${res.fu}</b> fu`);
       lines.push(fuLine);
-      lines.push(`<b>番</b>：${res.yaku.map((y) => `${y.name} ${y.han}`).join(' + ')} = <b>${res.han}</b> 番`);
+      lines.push(L(`<b>番</b>：${res.yaku.map((y) => `${y.name} ${y.han}`).join(' + ')} = <b>${res.han}</b> 番`,
+        `<b>Han</b>: ${res.yaku.map((y) => `${tr(y.name)} ${y.han}`).join(' + ')} = <b>${res.han}</b> han`));
       const rawBase = res.fu * Math.pow(2, res.han + 2);
-      if (res.han >= 5) lines.push(`<b>基本点</b>：${res.han} 番 → <b>${res.limit}</b>，基本点 ${fmt(res.base)}（5 番以上不再看符）`);
-      else if (rawBase >= 2000) lines.push(`<b>基本点</b>：${res.fu} × 2<sup>${res.han}+2</sup> = ${fmt(rawBase)} ≥ 2000 → <b>满贯</b>，基本点封顶 2000`);
-      else lines.push(`<b>基本点</b>：${res.fu} × 2<sup>${res.han}+2</sup> = ${res.fu} × ${Math.pow(2, res.han + 2)} = <b>${fmt(rawBase)}</b>`);
+      if (res.han >= 5) lines.push(L(`<b>基本点</b>：${res.han} 番 → <b>${res.limit}</b>，基本点 ${fmt(res.base)}（5 番以上不再看符）`,
+        `<b>Base points</b>: ${res.han} han → <b>${tr(res.limit)}</b>, base ${fmt(res.base)} (fu no longer matters from 5 han)`));
+      else if (rawBase >= 2000) lines.push(L(`<b>基本点</b>：${res.fu} × 2<sup>${res.han}+2</sup> = ${fmt(rawBase)} ≥ 2000 → <b>满贯</b>，基本点封顶 2000`,
+        `<b>Base points</b>: ${res.fu} × 2<sup>${res.han}+2</sup> = ${fmt(rawBase)} ≥ 2000 → <b>Mangan</b>, capped at 2000`));
+      else lines.push(`<b>${L('基本点', 'Base points')}</b>${L('：', ': ')}${res.fu} × 2<sup>${res.han}+2</sup> = ${res.fu} × ${Math.pow(2, res.han + 2)} = <b>${fmt(rawBase)}</b>`);
     }
     const b = res.base;
-    const up = (x) => (x % 100 === 0 ? fmt(x) : `${fmt(x)} → 进位 ${fmt(MJ.ceil100(x))}`);
+    const up = (x) => (x % 100 === 0 ? fmt(x) : `${fmt(x)} → ${L('进位', 'round up to')} ${fmt(MJ.ceil100(x))}`);
     if (!tsumo) {
       const k = isDealer ? 6 : 4;
-      lines.push(`<b>支付</b>：${isDealer ? '亲家' : '子家'}荣和 = 基本点 × ${k} = ${up(b * k)}，由放铳者支付 <b>${fmt(pay.total)}</b>`);
+      lines.push(L(`<b>支付</b>：${isDealer ? '亲家' : '子家'}荣和 = 基本点 × ${k} = ${up(b * k)}，由放铳者支付 <b>${fmt(pay.total)}</b>`,
+        `<b>Payment</b>: ${isDealer ? 'dealer' : 'non-dealer'} ron = base × ${k} = ${up(b * k)}, paid by the discarder: <b>${fmt(pay.total)}</b>`));
     } else if (isDealer) {
-      lines.push(`<b>支付</b>：亲家自摸，三家各付 基本点 × 2 = ${up(b * 2)}，合计 <b>${fmt(pay.total)}</b>`);
+      lines.push(L(`<b>支付</b>：亲家自摸，三家各付 基本点 × 2 = ${up(b * 2)}，合计 <b>${fmt(pay.total)}</b>`,
+        `<b>Payment</b>: dealer tsumo, each player pays base × 2 = ${up(b * 2)}, total <b>${fmt(pay.total)}</b>`));
     } else {
-      lines.push(`<b>支付</b>：子家自摸，亲家付 基本点 × 2 = ${up(b * 2)}，另两家各付 基本点 × 1 = ${up(b)}，合计 <b>${fmt(pay.total)}</b>`);
+      lines.push(L(`<b>支付</b>：子家自摸，亲家付 基本点 × 2 = ${up(b * 2)}，另两家各付 基本点 × 1 = ${up(b)}，合计 <b>${fmt(pay.total)}</b>`,
+        `<b>Payment</b>: non-dealer tsumo, the dealer pays base × 2 = ${up(b * 2)}, the other two pay base × 1 = ${up(b)} each, total <b>${fmt(pay.total)}</b>`));
     }
-    if (honba) lines.push(`<b>本场</b>：${honba} 本场，${tsumo ? `每家再加 ${honba * 100}` : `再加 ${honba * 300}`}`);
+    if (honba) lines.push(L(`<b>本场</b>：${honba} 本场，${tsumo ? `每家再加 ${honba * 100}` : `再加 ${honba * 300}`}`,
+      `<b>Honba</b>: ${honba} honba, ${tsumo ? `+${honba * 100} from each player` : `+${honba * 300}`}`));
     return lines;
   }
 

@@ -68,6 +68,21 @@
     });
   }
 
+  /**
+   * 牌 id → 记法字符串，如 "1112345678999m"、"340m55p"（赤五记为 0，字牌 1-7z = 东南西北白发中）。
+   * 与 parseTypes 互逆。
+   */
+  function toNotation(ids) {
+    const bySuit = [[], [], [], []];
+    const sorted = ids.slice().sort((a, b) => typeOf(a) - typeOf(b) || (isRed(a) ? 1 : 0) - (isRed(b) ? 1 : 0) || a - b);
+    for (const id of sorted) {
+      const t = typeOf(id);
+      const s = t >= 27 ? 3 : (t / 9) | 0;
+      bySuit[s].push(s === 3 ? t - 26 : isRed(id) ? 0 : (t % 9) + 1);
+    }
+    return bySuit.map((d, s) => (d.length ? d.join('') + 'mpsz'[s] : '')).join('');
+  }
+
   /** 宝牌指示牌 → 宝牌 */
   function doraFromIndicator(t) {
     if (t < 27) return ((t / 9) | 0) * 9 + ((t % 9) + 1) % 9;
@@ -581,6 +596,7 @@
     ai: 'builtin', // 'builtin' | 'mortal'
     mortalUrl: 'http://127.0.0.1:8174',
     aiSpeed: 'normal', // 'normal' | 'fast'
+    hintAi: 'auto', // 「策」按钮用谁：'auto' 对手是 Mortal 时用 Mortal | 'mortal' | 'builtin'
   };
 
   // 顺位马（单位：千点）。雀魂友人场默认 +15 / +5 / −5 / −15
@@ -613,7 +629,7 @@
   Object.assign(MJ, {
     DEFAULT_RULES, setAka, AKA_SETS, UMA, calcFinal,
     typeOf, isRed, suitOf, numOf, isHonor, isYaochu, typeName, counts, sortIds,
-    parseTypes, parseIds, doraFromIndicator,
+    parseTypes, parseIds, toNotation, doraFromIndicator,
     shanten, shantenRegular, shantenChiitoi, shantenKokushi, waits, decompose,
     basePoints, limitName, calcPayments, evaluateWin, ceil100,
     WIND_NAMES, NUM_CN, HONOR_CN, WAIT_CN, YAOCHU_LIST,

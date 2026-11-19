@@ -60,6 +60,9 @@ def main():
         reaction = bot.react(line)
         if reaction:
             print(reaction, flush=True)
+        elif '"can_act":false' not in line.replace(' ', ''):
+            # 被要求决策却没有可做的操作时明确回一个 none，桥接程序就不用干等到超时
+            print('{"type":"none"}', flush=True)
 
 
 if __name__ == '__main__':

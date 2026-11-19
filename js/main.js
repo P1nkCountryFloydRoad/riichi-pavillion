@@ -2,8 +2,10 @@
 (function () {
   'use strict';
   const MJ = window.MJ;
+  MJ.applyStaticText();
   MJ.Settings.init();
   MJ.Records.init();
+  MJ.Replay.init();
   MJ.UI.init();
   MJ.Tutorial.init();
   // 通过 http(s) 访问时注册 Service Worker，之后断网也能打开；直接双击 index.html 本身就是离线的
