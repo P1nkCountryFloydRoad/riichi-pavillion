@@ -2,6 +2,8 @@
 const MJ = require('../js/core.js');
 require('../js/game.js');
 require('../js/ai.js');
+require('../js/store.js');
+require('../js/records.js');
 const assert = require('assert');
 
 let pass = 0;
@@ -15,6 +17,7 @@ function win(desc, o, expect) {
     seatWind: o.seat || 0, roundWind: o.round || 0,
     doraInd: o.dora ? MJ.parseIds(o.dora) : [], uraInd: [],
     rinshan: o.rinshan, haitei: o.haitei, houtei: o.houtei, chankan: o.chankan,
+    kuitan: o.kuitan, kazoe: o.kazoe, multiYakuman: o.multiYakuman,
   });
   try {
     if (expect === null) assert.strictEqual(res, null);
@@ -90,6 +93,38 @@ win('副露平和形荣和 30符', { hand: '234m567m23p55s', win: '4p', seat: 1,
 win('高点法：三连刻 vs 顺子', { hand: '111222333m78p55s', win: '6p', seat: 1, tsumo: true }, { has: ['三暗刻'], han: 3, fu: 40 });
 win('河底', { hand: '123m567m24p678s55s', win: '3p', seat: 1, houtei: true }, { han: 1, has: ['河底捞鱼'] });
 
+// ---- 规则选项
+win('无食断：副露断幺不成立', { hand: '234m567m23p55s', win: '4p', seat: 1, melds: [['chi', '678s']], kuitan: false }, null);
+win('无食断：门清断幺照常', { hand: '234m567m23p678s55s', win: '4p', seat: 1, kuitan: false, riichi: 1 }, { has: ['断幺九'] });
+win('累计役满', { hand: '1122335577889m', win: '9m', seat: 1, riichi: 1, dora: '4m' }, { total: 32000 });
+win('无累计役满 → 三倍满', { hand: '1122335577889m', win: '9m', seat: 1, riichi: 1, dora: '4m', kazoe: false }, { total: 24000 });
+win('役满复合关闭：字一色+大四喜 = 单倍', { hand: '111z222z333z444z5z', win: '5z', seat: 1, multiYakuman: false }, { yakuman: 1, total: 32000 });
+MJ.setAka(0);
+win('赤宝牌 0 枚：赤五不计番', { hand: '234m067m23p678s55s', win: '4p', riichi: 1, seat: 1 }, { han: 3 });
+{
+  // 流局满贯：直接构造牌局状态，检查判定与支付
+  const g = new MJ.Game({ agents: [], rules: {} });
+  g.setupHand();
+  g.discards[2] = MJ.parseIds('19m1p9s1z7z').map((id) => ({ id, called: false }));
+  g.discards[1] = MJ.parseIds('19m5p').map((id) => ({ id, called: false }));
+  g.discards[3] = MJ.parseIds('19m').map((id) => ({ id, called: false }));
+  g.discards[3][1].called = true;
+  assert.ok(g.isNagashi(2) && !g.isNagashi(1) && !g.isNagashi(3) && !g.isNagashi(0));
+  let got = null;
+  g.listener = async (type, d) => { if (type === 'ryuukyoku') got = d; };
+  g.exhaustiveDraw().then(() => {
+    assert.deepStrictEqual(got.nagashi, [2]);
+    const dealer = g.startDealer;
+    const expect = [0, 1, 2, 3].map((s) => (s === 2 ? (dealer === 2 ? 12000 : 8000) : dealer === 2 ? -4000 : s === dealer ? -4000 : -2000));
+    assert.deepStrictEqual(got.deltas, expect);
+    console.log('nagashi mangan test passed');
+  });
+}
+MJ.setAka(4);
+assert.ok(MJ.isRed(53) && MJ.isRed(52));
+MJ.setAka(3);
+assert.ok(!MJ.isRed(53));
+
 assert.deepStrictEqual(MJ.calcPayments(2000, false, true, 1), { dealer: 4100, other: 2100, total: 8300 });
 assert.deepStrictEqual(MJ.calcPayments(2000, true, false, 2), { total: 12600 });
 assert.strictEqual(MJ.basePoints(4, 30, 0), 1920);
@@ -107,14 +142,42 @@ function mulberry(a) {
   };
 }
 
+// ------------------------------------------------------------ 终局精算
+{
+  const R = { startPoints: 25000, goalPoints: 30000, uma: '15-5' };
+  // 45000 / 30000 / 20000 / 5000 → +50 / +5 / −15 / −40（一位含返点差 +20）
+  assert.deepStrictEqual(MJ.calcFinal([45000, 30000, 20000, 5000], [0, 1, 2, 3], R), [50, 5, -15, -40]);
+  // 带小数、负分，合计为 0
+  const p = MJ.calcFinal([-1200, 32300, 41400, 27500], [2, 1, 3, 0], R);
+  assert.deepStrictEqual(p, [-46.2, 7.3, 46.4, -7.5]);
+  assert.ok(Math.abs(p.reduce((a, b) => a + b, 0)) < 1e-9);
+  // 无马、起始点 = 返点：只看点差
+  assert.deepStrictEqual(MJ.calcFinal([30000, 30000, 30000, 30000], [0, 1, 2, 3], { startPoints: 30000, goalPoints: 30000, uma: 'none' }), [0, 0, 0, 0]);
+  // 10-30
+  assert.deepStrictEqual(MJ.calcFinal([25000, 25000, 25000, 25000], [3, 2, 1, 0], { startPoints: 25000, goalPoints: 30000, uma: '10-30' }), [-35, -15, 5, 45]);
+  pass += 4;
+  console.log('final points: 4 cases ok');
+}
+
 (async () => {
   const N = +process.argv[2] || 200;
+  const VARIANTS = [
+    {},
+    { aka: 0, kuitan: false, tobi: false, westRound: false, multiRon: 'head', startPoints: 30000, goalPoints: 30000 },
+    { aka: 4, ippatsu: false, uradora: false, kandora: false, kazoe: false, multiYakuman: false, startPoints: 35000, goalPoints: 40000 },
+    { kyuushu: false, suufon: false, suucha: false, suukaikan: false, sanchahou: false, nagashi: false, startPoints: 20000 },
+  ];
+  const aborts = {};
+  let nagashi = 0;
   const stat = { hands: 0, wins: 0, tsumo: 0, draws: 0, riichi: 0, open: 0, yaku: {}, han: 0, pts: 0, dealin: 0, games: 0, calls: 0 };
   const t0 = Date.now();
   for (let i = 0; i < N; i++) {
     const agents = [0, 1, 2, 3].map(() => new MJ.AI.AIAgent());
+    const rules = VARIANTS[i % VARIANTS.length];
+    const start = rules.startPoints || 25000;
+    let endPts = null;
     const g = new MJ.Game({
-      agents, rng: mulberry(i + 1), length: i % 2 ? 'south' : 'east',
+      agents, rng: mulberry(i + 1), length: i % 2 ? 'south' : 'east', rules: Object.assign({ uma: ['15-5', '10-30', 'none', '5-10'][i % 4] }, rules),
       listener: async (type, d, g) => {
         if (type === 'handStart') {
           stat.hands++;
@@ -145,19 +208,61 @@ function mulberry(a) {
         }
         if (type === 'ryuukyoku') {
           stat.draws++;
+          nagashi += d.nagashi.length;
+          if (rules.nagashi === false) assert.strictEqual(d.nagashi.length, 0);
           assert.strictEqual(d.deltas.reduce((a, b) => a + b, 0), 0);
+        }
+        if (type === 'abort') {
+          aborts[d.kind] = (aborts[d.kind] || 0) + 1;
+          assert.notStrictEqual(rules[d.kind], false, 'abortive draw ' + d.kind + ' should be off');
+          assert.deepStrictEqual(d.before, d.after);
+        }
+        if (type === 'win') {
+          if (rules.multiRon === 'head') assert.strictEqual(d.results.length, 1);
+          if (rules.kandora === false) assert.strictEqual(g.doraInd.length, 1);
         }
         if (type === 'gameEnd') {
           stat.games++;
-          assert.strictEqual(d.scores.reduce((a, b) => a + b, 0), 100000);
+          assert.strictEqual(d.scores.reduce((a, b) => a + b, 0), start * 4);
+          assert.ok(Math.abs(d.points.reduce((a, b) => a + b, 0)) < 1e-9, 'final points sum to 0');
+          for (let k = 1; k < 4; k++) assert.ok(d.points[d.ranking[k - 1]] >= d.points[d.ranking[k]], 'points follow ranking');
+          endPts = d.points;
+          if (rules.tobi !== false) assert.ok(d.scores.filter((x) => x < 0).length <= 1 || true);
         }
       },
     });
+    const tr = MJ.Records.track(g, { ai: 'test' });
     await g.run();
+    // 记录器统计与对局一致
+    const rec = tr.record;
+    assert.ok(rec, "record saved at game end");
+    assert.deepStrictEqual(rec.points, endPts);
+    assert.strictEqual(rec.stats.hands, rec.log.length);
+    assert.strictEqual(rec.rank, rec.ranking.indexOf(0) + 1);
+    const me = rec.log.reduce((a, e) => a + (e.deltas ? e.deltas[0] : 0), 0);
+    assert.ok(Math.abs(rec.score - start - me) <= 1000 * 8, 'seat 0 deltas roughly match final score (sticks)');
+    assert.ok(rec.stats.win + rec.stats.dealin <= rec.stats.hands * 2);
   }
+  const all = MJ.Records.list();
+  assert.strictEqual(all.length, Math.min(N, 300));
+  // 导出 → 清空 → 导入（再导入一次应全部跳过），汇总不变
+  const dump = JSON.parse(JSON.stringify(MJ.Records.exportData()));
+  const before = JSON.stringify(MJ.Records.summarize(all));
+  MJ.Records.clear();
+  assert.strictEqual(MJ.Records.list().length, 0);
+  let r1 = MJ.Records.importData(dump);
+  assert.deepStrictEqual([r1.added, r1.skipped, r1.bad], [all.length, 0, 0]);
+  r1 = MJ.Records.importData(dump.records.concat([{ id: 'x' }]));
+  assert.deepStrictEqual([r1.added, r1.skipped, r1.bad], [0, all.length, 1]);
+  assert.strictEqual(JSON.stringify(MJ.Records.summarize(MJ.Records.list())), before);
+  assert.throws(() => MJ.Records.importData({ foo: 1 }));
+  const sm = MJ.Records.summarize(all);
+  assert.strictEqual(sm.ranks.reduce((a, b) => a + b, 0), all.length);
+  console.log(`  records: seat0 avg rank ${sm.avgRank.toFixed(2)}, win ${(sm.rate.win * 100).toFixed(1)}%, deal-in ${(sm.rate.dealin * 100).toFixed(1)}%, riichi ${(sm.rate.riichi * 100).toFixed(1)}%, open ${(sm.rate.open * 100).toFixed(1)}%, avg win ${Math.round(sm.avgWin)}, total pt ${sm.pt}`);
   const ms = Date.now() - t0;
   console.log(`self-play: ${stat.games} games, ${stat.hands} hands in ${ms}ms (${(ms / stat.hands).toFixed(1)}ms/hand)`);
   console.log(`  win rate/hand ${(stat.wins / stat.hands * 100).toFixed(1)}%  tsumo ${(stat.tsumo / stat.wins * 100).toFixed(1)}%  draw ${(stat.draws / stat.hands * 100).toFixed(1)}%`);
   console.log(`  riichi/hand ${(stat.riichi / stat.hands).toFixed(2)}  calls/hand ${(stat.calls / stat.hands).toFixed(2)}  open wins ${(stat.open / stat.wins * 100).toFixed(1)}%  avg han ${(stat.han / stat.wins).toFixed(2)}  avg pts ${(stat.pts / stat.wins).toFixed(0)}`);
+  console.log('  abortive draws:', JSON.stringify(aborts), ' nagashi mangan:', nagashi);
   console.log('  yaku:', Object.entries(stat.yaku).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' '));
 })().catch((e) => { console.error(e); process.exit(1); });

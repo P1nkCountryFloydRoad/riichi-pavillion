@@ -294,6 +294,7 @@
       const build = () => {
         const btns = [];
         if (opt.tsumo) btns.push({ label: '自摸', cls: 'win', key: 'tsumo', fn: () => done({ type: 'tsumo' }) });
+        if (opt.kyuushu) btns.push({ label: '九种九牌', cls: 'call', key: 'kyuushu', fn: () => done({ type: 'kyuushu' }) });
         if (opt.riichi.length) {
           btns.push({
             label: p.riichiMode ? '取消' : '立直', cls: p.riichiMode ? '' : 'riichi', key: 'riichi',
@@ -405,6 +406,7 @@
     if (p.kind === 'turn') {
       const a = MJ.AI.decideTurn(g, 0, p.opt);
       if (a.type === 'tsumo') flash('tsumo');
+      else if (a.type === 'kyuushu') flash('kyuushu');
       else if (a.type === 'ankan' || a.type === 'kakan') flash('kan');
       else {
         $$('#my-hand .tile').forEach((t) => t.classList.toggle('hint', typeOf(+t.dataset.id) === typeOf(a.tile) && !t.classList.contains('dim')));
@@ -555,7 +557,7 @@
       UI.pending = null;
       clearActions();
       $$('.plate.active').forEach((p) => p.classList.remove('active'));
-      banner('流局', '荒牌流局');
+      banner(d.nagashi && d.nagashi.length ? '流局满贯' : '流局', '荒牌流局');
       Sound.play('draw-end');
       for (let s = 1; s < 4; s++) if (d.tenpai[s]) renderOppHand(s, { reveal: true });
       await sleep(1400);
@@ -563,10 +565,42 @@
       renderCenter();
     },
 
+    async abort(d) {
+      UI.pending = null;
+      clearActions();
+      $('#waits').classList.remove('show');
+      $$('.plate.active').forEach((p) => p.classList.remove('active'));
+      const info = ABORT[d.kind];
+      if (d.kind === 'kyuushu' && d.seat !== 0) renderOppHand(d.seat, { reveal: true });
+      if (d.kind === 'kyuushu') bubble(d.seat, '流局');
+      banner(info.name, '途中流局');
+      Sound.play('draw-end');
+      await sleep(1400);
+      const g = UI.game;
+      let who = '';
+      if (d.kind === 'kyuushu') who = `${WIND[g.seatWind(d.seat)]}家 · ${SEAT[d.seat]}宣告。`;
+      if (d.kind === 'sanchahou') who = `${d.seats.map((s) => SEAT[s]).join('、')}同时荣和${SEAT[d.from]}的舍牌。`;
+      const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${info.name}</span><span class="sub">途中流局 · 不计点数，本场 +1，亲家连庄</span></div>` +
+        `<p class="abort-why">${who}${info.desc}</p>` +
+        (d.kind === 'kyuushu' ? `<div class="win-hand"><div class="closed">${MJ.sortIds(g.hands[d.seat]).map((id) => R.tileHTML(id)).join('')}</div></div>` : '') +
+        deltasHTML(g, d.before, d.after) +
+        '<div class="btn-row"><button class="btn primary" data-a="next">继续</button></div>';
+      await waitModal(modal(html));
+      renderCenter();
+    },
+
     async gameEnd(d) {
       renderCenter();
       await showEndCard(d);
     },
+  };
+
+  const ABORT = {
+    kyuushu: { name: '九种九牌', desc: '第一巡、无人鸣牌时，手里有九种以上的幺九牌，可以宣告流局。' },
+    suufon: { name: '四风连打', desc: '第一巡四家打出了同一种风牌。' },
+    suucha: { name: '四家立直', desc: '四家全部立直。' },
+    suukaikan: { name: '四杠散了', desc: '两家以上合计开了四个杠。' },
+    sanchahou: { name: '三家和了', desc: '三家同时荣和同一张牌。' },
   };
 
   // ------------------------------------------------------------ 结算弹层
@@ -633,12 +667,16 @@
         const w = MJ.waits(counts(g.hands[s]), g.melds[s].length);
         extra = `<span class="sub">听</span><span class="hand">${w.map((t) => R.tileHTMLByType(t, false)).join('')}</span>`;
       }
-      rows += `<div class="tenpai-row"><span><b style="color:var(--gold);font-family:var(--kai)">${WIND[g.seatWind(s)]}</b> ${SEAT[s]}</span>` +
+      rows += `<div data-seat="${s}" class="tenpai-row"><span><b style="color:var(--gold);font-family:var(--kai)">${WIND[g.seatWind(s)]}</b> ${SEAT[s]}</span>` +
         `<span class="st ${d.tenpai[s] ? 'yes' : 'no'}">${d.tenpai[s] ? '听牌' : '未听'}</span>${extra}</div>`;
     }
     const n = d.tenpai.filter(Boolean).length;
-    const note = n === 0 || n === 4 ? '无人支付罚符' : '未听牌者共付 3000 点，由听牌者平分';
-    const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">流局</span><span class="sub">${note}${d.tenpai[g.dealer] ? ' · 亲家听牌连庄' : ' · 亲家未听，轮庄'}</span></div>` +
+    let note = n === 0 || n === 4 ? '无人支付罚符' : '未听牌者共付 3000 点，由听牌者平分';
+    if (d.nagashi && d.nagashi.length) {
+      note = d.nagashi.map((s) => SEAT[s]).join('、') + ' 流局满贯（舍牌全是幺九且未被鸣走），按满贯自摸收点，不计不听罚符';
+      for (const s of d.nagashi) rows = rows.replace(`data-seat="${s}" class="tenpai-row"`, `data-seat="${s}" class="tenpai-row nagashi"`);
+    }
+    const html = `<div class="win-head"><span class="win-kind" style="color:var(--jade)">${d.nagashi && d.nagashi.length ? '流局满贯' : '流局'}</span><span class="sub">${note}${d.tenpai[g.dealer] ? ' · 亲家听牌连庄' : ' · 亲家未听，轮庄'}</span></div>` +
       rows + deltasHTML(g, d.before, d.after) +
       '<div class="btn-row"><button class="btn primary" data-a="next">继续</button></div>';
     return waitModal(modal(html));
@@ -648,18 +686,39 @@
     const g = UI.game;
     const place = d.ranking.indexOf(0) + 1;
     const title = ['一位！漂亮的胜利', '二位，稳稳连对', '三位，再接再厉', '四位，下次翻盘'][place - 1];
+    const r = g.rules;
+    const goal = Math.max(r.goalPoints, r.startPoints);
+    const uma = MJ.UMA[r.uma] || MJ.UMA.none;
+    const oka = ((goal - r.startPoints) * 4) / 1000;
+    const signed = MJ.Records.signed;
     let rows = '';
     d.ranking.forEach((s, i) => {
-      rows += `<div class="rank-row${s === 0 ? ' me' : ''}" style="--i:${i}"><span class="no">${i + 1}</span><span>${SEAT[s]}</span><span class="sc">${fmt(d.scores[s])}</span></div>`;
+      const p = d.points[s];
+      const parts = [`(${fmt(d.scores[s])} − ${fmt(goal)}) ÷ 1000`];
+      if (uma[i]) parts.push(`马 ${uma[i] > 0 ? '+' : '−'}${Math.abs(uma[i])}`);
+      if (i === 0 && oka) parts.push(`返点差 +${oka}`);
+      rows += `<div class="rank-row${s === 0 ? ' me' : ''}" style="--i:${i}"><span class="no">${i + 1}</span><span>${SEAT[s]}</span>` +
+        `<span class="sc">${fmt(d.scores[s])}</span><span class="fp ${p > 0 ? 'up' : p < 0 ? 'down' : ''}" title="${parts.join(' ＋ ')}">${signed(p)}</span></div>`;
     });
-    const html = `<div class="win-head"><span class="win-kind">终局</span><h2>${title}</h2></div>${rows}` +
-      '<div class="btn-row"><button class="btn" data-a="menu">返回主菜单</button><button class="btn primary" data-a="again">再来一局</button></div>';
+    const rec = UI.tracker && UI.tracker.record;
+    let mine = '';
+    if (rec) {
+      const st = rec.stats;
+      const n = MJ.Records.list().length;
+      mine = `<div class="end-mine"><span>本场：${st.hands} 局 · 和了 ${st.win} · 放铳 ${st.dealin} · 立直 ${st.riichi} · 副露 ${st.open}</span>` +
+        `<span class="muted">已存入战绩（共 ${n} 场）</span></div>`;
+    }
+    const umaTxt = uma[0] ? `顺位马 ${MJ.Records.umaLabel(r.uma)}` : '无顺位马';
+    const html = `<div class="win-head"><span class="win-kind">终局</span><h2>${title}</h2>` +
+      `<span class="sub">得点 = (点数 − 返点 ${fmt(goal)}) ÷ 1000 + ${umaTxt}${oka ? `，一位另得返点差 +${oka}` : ''}</span></div>${rows}${mine}` +
+      '<div class="btn-row"><button class="btn" data-a="stats">战绩与数据</button><button class="btn" data-a="menu">返回主菜单</button><button class="btn primary" data-a="again">再来一局</button></div>';
     const m = modal(html);
     Sound.play(place <= 2 ? 'win' : 'draw-end');
     return new Promise((resolve) => {
       m.addEventListener('click', (e) => {
         const a = e.target.dataset && e.target.dataset.a;
-        if (a === 'menu') {
+        if (a === 'stats') MJ.Records.open();
+        else if (a === 'menu') {
           resolve();
           showMenu();
         } else if (a === 'again') {
@@ -685,23 +744,79 @@
   }
 
   // ------------------------------------------------------------ 流程
-  function startGame(length) {
+  let toastTimer = null;
+  function toast(text, ms) {
+    const t = $('#toast');
+    t.textContent = text;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), ms || 4200);
+  }
+
+  async function startGame(length) {
     if (UI.game) UI.game.abort();
     Sound.unlock();
+    const rules = MJ.Settings.rules;
+    const fast = rules.aiSpeed === 'fast';
     const human = {
       onTurn: (g, seat, opt) => promptTurn(g, opt),
       onCall: (g, seat, o) => promptCall(g, o),
     };
-    const delay = (kind) => sleep(kind === 'turn' ? 300 + Math.random() * 360 : 180);
+    const delay = (kind) => sleep(kind === 'turn' ? (fast ? 120 + Math.random() * 120 : 300 + Math.random() * 360) : fast ? 80 : 180);
+    const builtin = () => new MJ.AI.AIAgent({ delay });
+
+    let useMortal = rules.ai === 'mortal';
+    let engineName = 'Mortal';
+    if (useMortal) {
+      toast('正在连接 Mortal…', 2500);
+      const p = await MJ.Mjai.ping(rules.mortalUrl);
+      if (!p.ok) {
+        useMortal = false;
+        toast('连不上 Mortal 桥接程序（' + (p.error || '未知错误') + '），本局改用内置 AI', 6000);
+      } else {
+        engineName = p.engine || 'Mortal';
+        toast('对手：' + engineName, 2500);
+      }
+    }
+
     const agents = [human];
-    for (let i = 1; i < 4; i++) agents.push(new MJ.AI.AIAgent({ delay }));
     const game = new MJ.Game({
-      agents, length,
+      agents, length, rules,
       listener: async (type, d, g) => {
         if (g !== UI.game) return;
         if (handlers[type]) await handlers[type](d);
       },
     });
+    if (useMortal) {
+      const log = new MJ.Mjai.MjaiLog(game);
+      const session = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      let warned = false;
+      for (let s = 1; s < 4; s++) {
+        const a = new MJ.Mjai.MjaiAgent({
+          url: rules.mortalUrl, log, session, fallback: builtin(),
+          onError: (msg) => {
+            console.warn('Mortal seat ' + s + ':', msg);
+            if (!warned) toast('Mortal 出错，已换回内置 AI：' + msg, 7000);
+            warned = true;
+            $('#ai-badge').classList.add('bad');
+          },
+        });
+        // Mortal 自己就有计算延迟，只补一点节奏
+        const t = a.onTurn.bind(a);
+        a.onTurn = async (g, seat, opt) => {
+          const [r] = await Promise.all([t(g, seat, opt), sleep(fast ? 60 : 220)]);
+          return r;
+        };
+        agents.push(a);
+      }
+    } else {
+      for (let i = 1; i < 4; i++) agents.push(builtin());
+    }
+    const badge = $('#ai-badge');
+    badge.textContent = useMortal ? engineName : '内置 AI';
+    badge.className = useMortal ? 'mortal' : '';
+
+    UI.tracker = MJ.Records.track(game, { ai: useMortal ? engineName : '内置 AI', rules: MJ.Settings.summary(true) });
     UI.game = game;
     UI.pending = null;
     clearActions();
@@ -732,9 +847,28 @@
       '<button class="mode" data-len="south"><b>半庄战</b><span>东南两圈八局<br>标准的完整对局</span></button>' +
       '<button class="mode learn" data-len="tut"><b>点数教程</b><span>符、番、点数表<br>例题与随机练习</span></button>' +
       '</div>' +
-      '<div class="foot">25000 点起 · 有赤宝牌 · 食断 · 一发 · 里宝牌 · 双倍荣和<br>全部资源本地生成，可离线游玩</div>' +
+      '<div class="menu-links">' +
+      '<button class="rules-link" data-len="rules"><b>规则设置</b><span class="rule-sum"></span></button>' +
+      '<button class="rules-link" data-len="stats"><b>战绩与数据</b><span class="stat-sum"></span></button>' +
+      '</div>' +
+      '<div class="foot">全部资源本地生成，可离线游玩</div>' +
       '</div>';
     $('#menu').classList.add('show');
+    refreshMenu();
+  }
+
+  function refreshMenu() {
+    const el = $('#menu .rule-sum');
+    if (el) el.textContent = MJ.Settings.summary();
+    const st = $('#menu .stat-sum');
+    if (st) {
+      const recs = MJ.Records.list();
+      if (!recs.length) st.textContent = '还没有对局记录';
+      else {
+        const sm = MJ.Records.summarize(recs);
+        st.textContent = `${sm.games} 场 · 平均顺位 ${sm.avgRank.toFixed(2)} · 累计 ${MJ.Records.signed(sm.pt)} · 和了率 ${(sm.rate.win * 100).toFixed(1)}%`;
+      }
+    }
   }
 
   function init() {
@@ -747,11 +881,13 @@
     $('#my-hand').addEventListener('mouseover', onHandOver);
     $('#my-hand').addEventListener('mouseleave', onHandOut);
     $('#menu').addEventListener('click', (e) => {
-      const b = e.target.closest('.mode');
+      const b = e.target.closest('.mode, .rules-link');
       if (!b) return;
       Sound.unlock();
       Sound.play('click');
       if (b.dataset.len === 'tut') MJ.Tutorial.open();
+      else if (b.dataset.len === 'rules') MJ.Settings.open();
+      else if (b.dataset.len === 'stats') MJ.Records.open();
       else startGame(b.dataset.len);
     });
     $('#btn-tutorial').addEventListener('click', () => {
@@ -760,6 +896,11 @@
       MJ.Tutorial.open();
     });
     $('#btn-hint').addEventListener('click', hint);
+    $('#btn-rules').addEventListener('click', () => {
+      Sound.unlock();
+      Sound.play('click');
+      MJ.Settings.open();
+    });
     const sb = $('#btn-sound');
     sb.classList.toggle('off', !Sound.on);
     sb.addEventListener('click', () => {
@@ -785,5 +926,5 @@
     showMenu();
   }
 
-  MJ.UI = Object.assign(UI, { init, startGame, showMenu, layout });
+  MJ.UI = Object.assign(UI, { init, startGame, showMenu, layout, refreshMenu, toast });
 })();
