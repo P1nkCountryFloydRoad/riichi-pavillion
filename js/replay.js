@@ -130,14 +130,37 @@
     return st;
   }
 
-  MJ.Replay = { splitKyoku, stateAt, apply, startState, sortTiles };
+  /**
+   * 第 k 局第 pos 步之后，是否轮到某个座位做决定。返回 { seat, kind, actual } 或 null。
+   *   kind：'turn' 摸牌 / 鸣牌 / 宣言立直之后要打牌；'call' 他家打牌后能否鸣牌、荣和
+   *   actual：牌谱里这个座位实际做的事（Mortal 动作编号）
+   * 他家打牌后如果没有人鸣牌，就看座位 0（玩家自己）当时能不能鸣——能不能由桥接程序判断。
+   */
+  function decisionAt(events, ky, pos) {
+    const i = ky.start + pos;
+    const cur = events[i], next = events[i + 1];
+    if (!cur || i >= ky.end) return null;
+    const X = MJ.Explain;
+    if (cur.type === 'tsumo' || cur.type === 'reach' || cur.type === 'chi' || cur.type === 'pon') {
+      return { seat: cur.actor, kind: 'turn', actual: X ? X.actionOf(next, cur.actor, 'turn') : null };
+    }
+    if (cur.type === 'dahai' || cur.type === 'kakan') {
+      const caller = next && ['chi', 'pon', 'daiminkan', 'hora'].includes(next.type) && next.actor !== cur.actor ? next.actor : null;
+      const seat = caller != null ? caller : cur.actor !== 0 ? 0 : null;
+      if (seat == null) return null;
+      return { seat, kind: 'call', actual: X ? X.actionOf(next, seat, 'call') : null };
+    }
+    return null;
+  }
+
+  MJ.Replay = { splitKyoku, stateAt, apply, startState, sortTiles, decisionAt };
   if (typeof document === 'undefined') return;
 
   // ------------------------------------------------------------ 界面
   const $ = (s, el) => (el || document).querySelector(s);
   const R = () => MJ.R;
   const fmt = (n) => Math.round(n).toLocaleString('en-US');
-  const view = { rec: null, events: null, kyokus: [], k: 0, pos: 0, timer: null };
+  const view = { rec: null, events: null, kyokus: [], k: 0, pos: 0, timer: null, ai: null };
 
   const tile = (name, cls) => {
     const f = MJ.Mjai.fromMjai(name);
@@ -241,6 +264,7 @@
         <button class="btn small" data-a="close">${L('关闭', 'Close')}</button>
       </div>
       <div class="rp-table"></div>
+      <div class="rp-ai"${view.ai ? '' : ' hidden'}></div>
       <div class="rp-res"></div>
       <div class="rp-bar">
         <span class="rp-act"></span>
@@ -253,6 +277,7 @@
         <button class="btn small primary" data-a="play" title="${L('播放 / 暂停（空格）', 'Play / pause (Space)')}"></button>
         <button class="btn small" data-a="next" title="${L('下一步（→）', 'Step forward (→)')}">${L('下一步', 'Next')} ▶</button>
         <button class="btn small" data-a="nk" title="${L('下一局（↓）', 'Next hand (↓)')}"${view.k === view.kyokus.length - 1 ? ' disabled' : ''}>${L('下一局', 'Next hand')} ⏭</button>
+        <button class="btn small${view.ai ? ' on' : ''}" data-a="ai" title="${L('在每个决定处看 Mortal 会怎么做，以及为什么（需要本机的 Mortal 桥接程序）', 'See what Mortal would do at each decision and why (needs the local Mortal bridge)')}">${L('Mortal 分析', 'Mortal analysis')}</button>
       </div>
     </div></div>`;
     view.shownK = view.k;
@@ -277,6 +302,102 @@
     const sl = $('.rp-slider', box);
     if (+sl.value !== view.pos) sl.value = view.pos;
     $('[data-a="play"]', box).textContent = view.timer ? L('❚❚ 暂停', '❚❚ Pause') : L('▶ 播放', '▶ Play');
+    if (view.ai) scheduleAnalysis();
+  }
+
+  // ------------------------------------------------------------ Mortal 分析（梯度归因）
+  /** 打开 / 关闭分析：打开时先确认桥接程序支持 /explain */
+  async function toggleAI() {
+    const box = $('#replay');
+    if (view.ai) {
+      view.ai = null;
+      $('.rp-ai', box).hidden = true;
+      $('[data-a="ai"]', box).classList.remove('on');
+      return;
+    }
+    const url = (MJ.Settings && MJ.Settings.rules.mortalUrl) || 'http://127.0.0.1:8174';
+    view.ai = { url, engine: 'Mortal', ok: false, cache: new Map(), pick: new Map(), token: 0 };
+    $('[data-a="ai"]', box).classList.add('on');
+    const pane = $('.rp-ai', box);
+    pane.hidden = false;
+    pane.innerHTML = `<div class="xa-msg">${L('正在连接 Mortal…', 'Connecting to Mortal…')}</div>`;
+    const p = await MJ.Mjai.ping(url);
+    if (!view.ai || view.ai.url !== url) return;
+    if (!p.ok || !p.explain) {
+      pane.innerHTML = `<div class="xa-msg">${p.ok
+        ? L('桥接程序不支持归因：请用 --mortal-dir 运行真正的 Mortal（并用 --model 指定权重，或在 config.toml 里设置 state_file），再重启桥接程序。', 'The bridge cannot do attribution. Run it with --mortal-dir (and --model, or state_file in config.toml), then restart it.')
+        : L('连不上 Mortal 桥接程序：', 'Cannot reach the Mortal bridge: ') + (p.error || '')}</div>`;
+      return;
+    }
+    view.ai.ok = true;
+    view.ai.engine = p.engine || 'Mortal';
+    scheduleAnalysis();
+  }
+
+  function scheduleAnalysis() {
+    const ai = view.ai;
+    if (!ai || !ai.ok) return;
+    clearTimeout(ai.timer);
+    ai.timer = setTimeout(analyze, view.timer ? 0 : 120); // 连续按方向键时只算停下来的那一步
+  }
+
+  async function analyze() {
+    const ai = view.ai;
+    if (!ai || !ai.ok) return;
+    const pane = $('#replay .rp-ai');
+    if (!pane) return;
+    const ky = view.kyokus[view.k];
+    const d = decisionAt(view.events, ky, view.pos);
+    if (!d) {
+      pane.innerHTML = `<div class="xa-msg">${L('这一步没有需要做的决定。移到摸牌、鸣牌之后，或他家打牌之后再看。', 'No decision at this step. Move to just after a draw or call, or after another player\'s discard.')}</div>`;
+      return;
+    }
+    const key = view.k + ':' + view.pos;
+    const b = ai.pick.has(key) ? ai.pick.get(key) : d.actual;
+    const ck = key + ':' + b;
+    const token = ++ai.token;
+    let res = ai.cache.get(ck);
+    if (!res) {
+      pane.innerHTML = `<div class="xa-msg">${L('计算中…', 'Computing…')}</div>`;
+      try {
+        res = await MJ.Explain.request(ai.url, {
+          events: view.events.slice(ky.start, ky.start + view.pos + 1),
+          player_id: d.seat, b: b == null ? null : b,
+        });
+        ai.cache.set(ck, res);
+      } catch (e) {
+        if (ai.token !== token || view.ai !== ai) return;
+        const msg = String(e && e.message || e);
+        pane.innerHTML = /轮不到|no decision/i.test(msg) ? `<div class="xa-msg">${L(`${SEAT[d.seat]}这一步没有可做的决定。`, `${SEAT[d.seat]} had no decision here.`)}</div>`
+          : `<div class="xa-msg">${L('归因失败：', 'Attribution failed: ')}${msg}</div>`;
+        return;
+      }
+    }
+    if (ai.token !== token || view.ai !== ai) return;
+    pane.innerHTML = analysisHTML(res, d, ai.engine);
+  }
+
+  function analysisHTML(res, d, engine) {
+    const X = MJ.Explain;
+    const items = X.items(res);
+    const opt = { kind: d.kind };
+    const pct = (p) => (p >= 0.995 ? '99+%' : p >= 0.1 ? Math.round(p * 100) + '%' : p >= 0.001 ? (p * 100).toFixed(1) + '%' : '<0.1%');
+    const rows = items.slice(0, 7).map((it, i) => {
+      const tags = (it.action === d.actual ? `<em class="real">${L('实际', 'Played')}</em>` : '');
+      return `<div class="hp-row${i === 0 ? ' best' : ' pick'}${it.action === res.b ? ' cmp' : ''}" data-b="${it.action}"><span class="hp-lab">${X.label(it.action, opt)}${tags}</span>` +
+        `<span class="hp-bar"><i style="width:${Math.max(1.5, it.p * 100).toFixed(1)}%"></i></span>` +
+        `<span class="hp-p">${pct(it.p)}</span><span class="hp-q">${it.q.toFixed(2)}</span></div>`;
+    }).join('');
+    const seatNames = [0, 1, 2, 3].map((k) => SEAT[(d.seat + k) % 4]);
+    const verdict = d.actual == null ? '' : d.actual === items[0].action
+      ? L('与 Mortal 的首选一致', 'Same as Mortal\'s top pick')
+      : L('与 Mortal 的首选不同', 'Differs from Mortal\'s top pick');
+    return `<div class="rp-ai-opts">
+        <div class="hp-head"><b>${engine}</b><span>${SEAT[d.seat]} · ${d.kind === 'turn' ? L('打牌', 'discard') : L('鸣牌 / 荣和', 'call / ron')}${verdict ? ' · ' + verdict : ''}</span></div>
+        ${rows}
+        <div class="hp-note">${L('点某一行，看 Mortal 为什么不选它', 'Tap a row to see why Mortal did not pick it')}</div>
+      </div>
+      <div class="rp-ai-x">${X.render(res, { labelA: X.label(res.a, opt), labelB: X.label(res.b, opt), seatNames })}</div>`;
   }
 
   function stop() {
@@ -303,6 +424,11 @@
   }
 
   function onClick(e) {
+    const row = e.target.closest('.rp-ai .hp-row.pick');
+    if (row && view.ai) {
+      view.ai.pick.set(view.k + ':' + view.pos, +row.dataset.b);
+      return analyze();
+    }
     const b = e.target.closest('button');
     if (!b) {
       if (e.target.classList.contains('overlay')) close();
@@ -310,6 +436,7 @@
     }
     const a = b.dataset.a;
     if (a === 'close') return close();
+    if (a === 'ai') return toggleAI();
     if (a === 'play') {
       if (view.timer) stop();
       else view.timer = setInterval(() => step(1), 650);
@@ -360,7 +487,7 @@
     const kyokus = splitKyoku(data.events);
     if (!kyokus.length) return false;
     stop();
-    Object.assign(view, { rec, events: data.events, kyokus, k: 0, pos: 0, shownK: -1 });
+    Object.assign(view, { rec, events: data.events, kyokus, k: 0, pos: 0, shownK: -1, ai: null });
     $('#replay').classList.add('show');
     render();
     return true;

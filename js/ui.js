@@ -409,6 +409,7 @@
 
   function clearHint() {
     UI.hintToken = null;
+    UI.hintInfo = null;
     const hp = $('#hint-panel');
     if (hp) {
       hp.classList.remove('show');
@@ -481,16 +482,23 @@
     const best = items[0];
     const shown = items.slice(0, 8);
     const rest = items.length - shown.length;
+    const canExplain = UI.explainOk && items.length > 1;
     const rows = shown.map((it, i) => {
       const lab = actionLabel(it, p);
-      return `<div class="hp-row${i === 0 ? ' best' : ''}"><span class="hp-lab">${lab.html}</span>` +
+      return `<div class="hp-row${i === 0 ? ' best' : ''}${canExplain && i > 0 ? ' pick' : ''}" data-act="${it.action}"><span class="hp-lab">${lab.html}</span>` +
         `<span class="hp-bar"><i style="width:${Math.max(1.5, it.p * 100).toFixed(1)}%"></i></span>` +
         `<span class="hp-p">${pctText(it.p)}</span><span class="hp-q" title="${L('Q 值', 'Q value')}">${it.q.toFixed(2)}</span></div>`;
     }).join('');
     const sub = info.shanten != null && info.shanten >= 0 ? `${info.shanten ? L(info.shanten + ' 向听', info.shanten + '-shanten') : L('听牌', 'Tenpai')}${info.furiten ? L(' · 振听', ' · Furiten') : ''}` : '';
-    hintPanel(`<div class="hp-head"><b>${UI.advisorName}</b><span>${sub}</span></div>${rows}` +
+    const tabs = canExplain
+      ? `<div class="hp-tabs"><button class="on" data-tab="p">${L('倾向', 'Odds')}</button><button data-tab="x" title="${L('梯度归因：为什么选第一名而不是另一个选项', 'Gradient attribution: why the top pick over another option')}">${L('为什么', 'Why')}</button></div>`
+      : '';
+    UI.hintInfo = { token, p, items, b: items.length > 1 ? items[1].action : null };
+    hintPanel(`<div class="hp-head"><b>${UI.advisorName}</b>${tabs}<span>${sub}</span></div><div class="hp-pane" data-pane="p">${rows}` +
       (rest > 0 ? `<div class="hp-more">${L(`另有 ${rest} 个选项，合计`, `${rest} more option${rest > 1 ? 's' : ''}, total`)} ${pctText(items.slice(8).reduce((a, x) => a + x.p, 0))}</div>` : '') +
-      `<div class="hp-note">${L('百分比 = 对合法操作的 Q 值做 softmax，表示 AI 的倾向，仅供参考', 'Percent = softmax of the Q values of legal actions. It shows what the AI leans towards; treat it as a hint.')}</div>`);
+      `<div class="hp-note">${L('百分比 = 对合法操作的 Q 值做 softmax，表示 AI 的倾向，仅供参考', 'Percent = softmax of the Q values of legal actions. It shows what the AI leans towards; treat it as a hint.')}` +
+      (canExplain ? L('。点某一行看「为什么不选它」', '. Tap a row to see why it was not picked') : '') + `</div></div>` +
+      (canExplain ? `<div class="hp-pane" data-pane="x" hidden></div>` : ''));
     // 手牌上标出每张可打牌的倾向（太小的不标，免得挤在一起；完整列表看面板）
     for (const it of items) {
       if (!it.tile || (it.p < 0.005 && it !== best)) continue;
@@ -505,6 +513,50 @@
       const key = actionLabel(best, p).key;
       if (key) flashAction(key);
     }
+  }
+
+  /** 「为什么」页：第一名 vs info.b 的梯度归因 */
+  async function showExplain() {
+    const info = UI.hintInfo, hp = $('#hint-panel');
+    if (!info || UI.hintToken !== info.token || !UI.advisor) return;
+    const pane = $('[data-pane="x"]', hp);
+    if (!pane) return;
+    const { items, p } = info;
+    const a = items[0].action, b = info.b;
+    const lab = (x) => actionLabel(items.find((it) => it.action === x), p).html;
+    const compare = items.slice(1, 6).map((it) => ({ action: it.action, html: lab(it.action) }));
+    if (!compare.some((c) => c.action === b)) compare.push({ action: b, html: lab(b) });
+    pane.innerHTML = `<div class="xa-msg">${L('计算中…', 'Computing…')}</div>`;
+    let res = null, err = null;
+    try {
+      res = await UI.advisor.explain(0, a, b);
+    } catch (e) {
+      err = String(e && e.message || e);
+    }
+    if (UI.hintInfo !== info || UI.hintToken !== info.token || info.b !== b) return; // 期间换了局面或换了比较对象
+    pane.innerHTML = err
+      ? `<div class="xa-msg">${L('归因失败：', 'Attribution failed: ')}${err}</div>`
+      : MJ.Explain.render(res, { labelA: lab(a), labelB: lab(b), compare });
+  }
+
+  function hintTab(tab) {
+    const hp = $('#hint-panel');
+    $$('.hp-tabs button', hp).forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
+    $$('.hp-pane', hp).forEach((x) => { x.hidden = x.dataset.pane !== tab; });
+    if (tab === 'x') showExplain();
+  }
+
+  function onHintClick(e) {
+    const info = UI.hintInfo;
+    if (!info || UI.hintToken !== info.token) return;
+    const tab = e.target.closest('.hp-tabs button');
+    if (tab) return hintTab(tab.dataset.tab);
+    const pick = e.target.closest('.hp-row.pick, .xa-b');
+    if (!pick) return;
+    const b = +(pick.dataset.act != null ? pick.dataset.act : pick.dataset.b);
+    if (b === info.items[0].action) return;
+    info.b = b;
+    hintTab('x');
   }
 
   function builtinHint(g, p) {
@@ -891,6 +943,7 @@
     let useMortal = rules.ai === 'mortal';
     let engineName = 'Mortal';
     let bridgeOk = false;
+    let explainOk = false; // 桥接程序是否支持 /explain（梯度归因）
     if (useMortal) {
       toast(L('正在连接 Mortal…', 'Connecting to Mortal…'), 2500);
       const p = await MJ.Mjai.ping(rules.mortalUrl);
@@ -899,6 +952,7 @@
         toast(L('连不上 Mortal 桥接程序（' + (p.error || '未知错误') + '），本局改用内置 AI', 'Cannot reach the Mortal bridge (' + (p.error || 'unknown error') + '). Using the built-in AI this game'), 6000);
       } else {
         bridgeOk = true;
+        explainOk = !!p.explain;
         engineName = p.engine || 'Mortal';
         toast(L('对手：', 'Opponents: ') + engineName, 2500);
       }
@@ -909,8 +963,10 @@
       if (rules.ai === 'mortal') hintMortal = false; // 刚才已经连不上
       else {
         const p = await MJ.Mjai.ping(rules.mortalUrl);
-        if (p.ok) engineName = p.engine || 'Mortal';
-        else {
+        if (p.ok) {
+          engineName = p.engine || 'Mortal';
+          explainOk = !!p.explain;
+        } else {
           hintMortal = false;
           toast(L('连不上 Mortal 桥接程序，「策」提示改用内置 AI', 'Cannot reach the Mortal bridge; hints will use the built-in AI'), 5000);
         }
@@ -930,6 +986,7 @@
     const session = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     UI.advisor = hintMortal ? new MJ.Mjai.MjaiAdvisor({ url: rules.mortalUrl, log, session }) : null;
     UI.advisorName = engineName;
+    UI.explainOk = hintMortal && explainOk;
     UI.rules = rules;
     if (useMortal) {
       let warned = false;
@@ -1041,6 +1098,7 @@
       MJ.Tutorial.open();
     });
     $('#btn-hint').addEventListener('click', hint);
+    $('#hint-panel').addEventListener('click', onHintClick);
     $('#btn-rules').addEventListener('click', () => {
       Sound.unlock();
       Sound.play('click');

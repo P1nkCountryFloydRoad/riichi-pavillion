@@ -52,6 +52,7 @@
 - 四家手牌全部明牌显示，牌河里标出立直宣言牌（横置）、被鸣走的牌（变暗）、摸切（略暗）和最新一张
 - ← / → 逐步，↑ / ↓ 换局，空格自动播放，也可以拖动进度条或直接选局
 - 每局结束时显示和了者、番符、役种、和了牌型和四家点数变化
+- 「Mortal 分析」：在每个决定处（摸牌、鸣牌、宣言立直之后，以及他家打牌后能否鸣牌）显示 Mortal 会怎么做、和实际打法是否一致，并给出梯度归因（见下文「为什么」）；需要桥接程序在运行
 
 「下载牌谱」存成 `雀庭牌谱-日期.mjson`：标准 mjai 事件格式，每行一个 JSON 事件，可以给其他支持 mjai 的工具（例如 Mortal 的复盘工具 mjai-reviewer）读取。
 
@@ -99,6 +100,26 @@
 
 Mortal 提示用的是你这一家视角的脱敏事件，和对手一样看不到别家手牌。连不上桥接程序时自动退回内置 AI。
 
+### 「为什么」：梯度归因
+
+「策」面板的「为什么」页（或点列表里的某一行）回答「Mortal 为什么选第一名，而不是这个选项」。牌谱回放的「Mortal 分析」用的是同一套计算，默认拿 Mortal 的首选和你实际的打法比较。
+
+做法（`tools/mortal_explain.py`）：
+
+1. 用 libriichi 把这一家视角的局面编码成 Mortal v4 的输入（1012 个通道 × 34 种牌），他家配牌和摸牌一律替换成 `?`
+2. 对 Q(A) − Q(B) 求积分梯度（32 步）。这个差值只取决于 Mortal 的优势头，局面价值会抵消，所以它就是「A 比 B 好多少」
+3. 按 `obs_repr.rs` 的编码顺序，把 1012 个通道归成十几组：手牌、宝牌、点数与顺位、局况、自己的牌河、下家 / 对家 / 上家（牌河、手切、立直、副露）、已见牌、向听与听牌、可选操作，以及 libriichi 预先算好的单人牌效表（进张、听牌率、和牌率、打点）
+
+基线是「空白局面、四家各 25,000 点」：点数这一组的含义是「当前点差和四家平分相比」。各组相加约等于 Q 差减去「基线偏好」，后者是模型不看局面时的先验，单独列成一行。每组旁边的小牌图是该组里影响最大的牌（宝牌组显示宝牌本身）。
+
+归因说明的是网络对哪些输入敏感，不是它的思考过程；各组之间有冗余（例如手牌信息也隐含在牌效表里），所以只看大的组，不要细究单个数值。
+
+用 `--mortal-dir` 运行的桥接程序会提供 `/explain`：权重来自 `--model`，没有时读 `config.toml` 的 `state_file`；只支持 v4 权重。归因进程在第一次请求时启动，Apple 芯片上默认用 GPU（`--explain-device` 可改），每次约 0.2–1 秒。自检：
+
+```bash
+~/Mortal/.venv/bin/python tools/mortal_explain.py --mortal-dir ~/Mortal/mortal --model 权重.pth --check
+```
+
 桥接程序为每个 AI 座位启动一个 Mortal 进程，把按座位脱敏的 mjai 事件逐行写入，
 只在需要决策时读取它的回应（其余事件带 `"can_act": false`）。对局中如果桥接断开、超时，
 或 Mortal 给出不合法的操作，该家会自动换回内置 AI，并在屏幕上提示。
@@ -114,6 +135,7 @@ Mortal 提示用的是你这一家视角的脱敏事件，和对手一样看不�
 | `js/game.js` | 对局引擎：摸打、鸣牌、立直、结算、连庄与终局 |
 | `js/ai.js` | AI：向听数 + 有效牌的牌效，现物 / 筋 / 字牌的防守，役牌与断幺的副露判断 |
 | `js/mjai.js` | mjai 协议适配：事件记录与脱敏、调用桥接程序的 agent、「策」提示的 Mortal 顾问 |
+| `js/explain.js` | Mortal 梯度归因的请求与绘制（「策」面板的「为什么」、回放的 Mortal 分析） |
 | `js/settings.js` | 规则与 AI 设置面板 |
 | `js/store.js` | 本地存储层（localStorage / 内存，可替换为文件） |
 | `js/i18n.js` | 界面语言（中文 / English）与术语表 |
@@ -121,6 +143,7 @@ Mortal 提示用的是你这一家视角的脱敏事件，和对手一样看不�
 | `js/paifu.js` | 牌谱存储（IndexedDB / 内存，可替换为文件） |
 | `js/replay.js` | 牌谱重建与回放界面、牌谱下载 |
 | `tools/mortal_bridge.py` | 浏览器 ↔ mjai 机器人（Mortal）的本机桥接程序 |
+| `tools/mortal_explain.py` | Mortal 决策的梯度归因（由桥接程序启动） |
 | `js/render.js` | 牌面 SVG、副露渲染、点数逐步讲解 |
 | `js/ui.js` | 牌桌界面、动画、玩家操作 |
 | `js/tutorial.js` | 点数教程：讲解、速查表、计算器、例题、随机练习 |
@@ -134,7 +157,7 @@ Mortal 提示用的是你这一家视角的脱敏事件，和对手一样看不�
 node test/run.js 200
 ```
 
-先跑役种 / 符 / 点数与规则选项的单元测试、鸣牌优先级、「策」提示的概率解析和英文术语表，再让四个 AI 在几组不同规则下自对局，检查牌数与点数守恒、关闭的规则不会触发，并从保存的牌谱逐局重建，核对每局点数变化与战绩一致、牌谱随导出导入。
+先跑役种 / 符 / 点数与规则选项的单元测试、鸣牌优先级、「策」提示的概率解析、回放的决策点判断和英文术语表，再让四个 AI 在几组不同规则下自对局，检查牌数与点数守恒、关闭的规则不会触发，并从保存的牌谱逐局重建，核对每局点数变化与战绩一致、牌谱随导出导入。
 
 ```bash
 node test/bridge.js 3
@@ -200,6 +223,7 @@ The complete log of each game (all four starting hands, every draw and discard, 
 - All four hands are shown face up. The discard ponds mark the riichi declaration tile (turned sideways), called tiles (dimmed), tsumogiri discards (slightly dimmed) and the latest discard
 - ← / → step, ↑ / ↓ switch hands, Space plays automatically; you can also drag the progress bar or pick a hand directly
 - At the end of each hand it shows the winner, han and fu, yaku, the winning hand shape and all four point changes
+- “Mortal analysis”: at each decision (after a draw, a call or a riichi declaration, and after another player's discard when you could call) it shows what Mortal would do, whether the actual play matched, and a gradient attribution (see “Why” below). The bridge must be running
 
 “Download log” saves a `.mjson` file: the standard mjai event format, one JSON event per line, readable by other mjai tools (for example mjai-reviewer, the Mortal review tool).
 
@@ -245,6 +269,26 @@ During a game, the 策 button at the top right lists how the AI leans across all
 
 Mortal hints use your own seat's masked view of the game, so like the opponents it cannot see other players' hands. If the bridge cannot be reached, hints fall back to the built-in AI.
 
+### “Why”: gradient attribution
+
+The “Why” tab of the hint panel (or tapping a row in the list) answers “why did Mortal pick its top choice instead of this option?”. “Mortal analysis” in the replay uses the same calculation and by default compares Mortal's top pick with what was actually played.
+
+How it works (`tools/mortal_explain.py`):
+
+1. libriichi encodes that seat's view of the game into Mortal v4's input (1012 channels × 34 tile kinds). Other players' starting hands and draws are replaced with `?`
+2. It takes integrated gradients (32 steps) of Q(A) − Q(B). This difference depends only on Mortal's advantage head, because the state value cancels out, so it measures exactly “how much better A is than B”
+3. Following the encoding order in `obs_repr.rs`, the 1012 channels are grouped into about fifteen groups: hand, dora, scores and rank, round state, own discards, the right / across / left players (discards, tedashi, riichi, calls), visible tiles, shanten and waits, legal actions, and libriichi's precomputed single-player tables (ukeire, tenpai odds, win odds, value)
+
+The baseline is an empty table with all four players at 25,000, so the score group means “the current point gaps compared with an even game”. The groups add up to roughly the Q gap minus the “Baseline” row, which is the model's prior when it sees no game and is shown on its own line. The small tiles next to a group are its most influential tiles (the Dora group shows the dora itself).
+
+Attribution shows which inputs the network is sensitive to, not how it reasons. The groups overlap (for example, hand information is also implied by the efficiency tables), so read the large groups and don't over-read single numbers.
+
+A bridge started with `--mortal-dir` serves `/explain`. It uses the weights from `--model`, or `state_file` in `config.toml` when there is no `--model`; only v4 weights are supported. The attribution process starts on the first request, uses the GPU on Apple silicon by default (change it with `--explain-device`), and takes about 0.2–1 s per request. Self-check:
+
+```bash
+~/Mortal/.venv/bin/python tools/mortal_explain.py --mortal-dir ~/Mortal/mortal --model weights.pth --check
+```
+
 The bridge starts one Mortal process per AI seat, writes the per-seat masked mjai events to it line by line, and only reads a reply when a decision is needed (all other events carry `"can_act": false`). If the bridge disconnects or times out during a game, or Mortal returns an illegal action, that seat switches back to the built-in AI and a notice appears on screen.
 
 Any mjai bot that follows the same protocol can be plugged in with `--cmd "your command {seat}"`. `tools/mjai_dummy_bot.py` is a sample bot that only discards what it draws and validates the format of every event it receives.
@@ -257,6 +301,7 @@ Any mjai bot that follows the same protocol can be plugged in with `--cmd "your 
 | `js/game.js` | Game engine: draws and discards, calls, riichi, settlement, dealer repeats and game end |
 | `js/ai.js` | AI: tile efficiency from shanten + acceptance; defense with safe tiles / suji / honors; call decisions for yakuhai and tanyao |
 | `js/mjai.js` | mjai protocol adapter: event log and masking, the agent that calls the bridge, the Mortal advisor for hints |
+| `js/explain.js` | Requests and drawing for Mortal's gradient attribution (the hint panel's “Why” tab and the replay's Mortal analysis) |
 | `js/settings.js` | Rules and AI settings panel |
 | `js/store.js` | Local storage layer (localStorage / memory, replaceable with files) |
 | `js/i18n.js` | Interface language (Chinese / English) and the term glossary |
@@ -264,6 +309,7 @@ Any mjai bot that follows the same protocol can be plugged in with `--cmd "your 
 | `js/paifu.js` | Game log storage (IndexedDB / memory, replaceable with files) |
 | `js/replay.js` | Game log reconstruction, the replay viewer and log download |
 | `tools/mortal_bridge.py` | Local bridge between the browser and mjai bots (Mortal) |
+| `tools/mortal_explain.py` | Gradient attribution of Mortal's decisions (started by the bridge) |
 | `js/render.js` | Tile SVGs, meld rendering, step-by-step score explanations |
 | `js/ui.js` | Table UI, animations, player actions |
 | `js/tutorial.js` | Scoring tutorial: lessons, score tables, calculator, examples, random practice |
@@ -276,7 +322,7 @@ Any mjai bot that follows the same protocol can be plugged in with `--cmd "your 
 node test/run.js 200
 ```
 
-Runs unit tests for yaku, fu, points and rule options, call priority, hint probability parsing and the English glossary. Then four AIs play each other under several rule sets, checking that tile counts and points are conserved and that disabled rules never trigger. Finally each game is rebuilt from its saved log, checking that every hand's point changes match the records and that logs survive export and import.
+Runs unit tests for yaku, fu, points and rule options, call priority, hint probability parsing, replay decision points and the English glossary. Then four AIs play each other under several rule sets, checking that tile counts and points are conserved and that disabled rules never trigger. Finally each game is rebuilt from its saved log, checking that every hand's point changes match the records and that logs survive export and import.
 
 ```bash
 node test/bridge.js 3
