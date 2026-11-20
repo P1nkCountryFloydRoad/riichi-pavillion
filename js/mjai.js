@@ -155,7 +155,7 @@
       const res = await fetch(url.replace(/\/+$/, '') + '/health', { signal: ctl ? ctl.signal : undefined });
       if (timer) clearTimeout(timer);
       const j = await res.json();
-      return { ok: !!j.ok, engine: j.engine || 'mjai', error: j.error };
+      return { ok: !!j.ok, engine: j.engine || 'mjai', error: j.error, explain: !!j.explain };
     } catch (e) {
       return { ok: false, error: e && e.name === 'AbortError' ? L('连接超时', 'connection timed out') : String(e && e.message || e) };
     }
@@ -301,6 +301,20 @@
         return r;
       }).finally(() => { if (this.busy && this.busy.n === n) this.busy = null; });
       this.busy = { n, p };
+      return p;
+    }
+
+    /** 当前局面下「为什么选 a 而不是 b」的梯度归因（桥接程序的 /explain）；同一问题重复询问时用缓存 */
+    explain(seat, a, b) {
+      const n = this.log.events.length;
+      const key = n + ':' + a + ':' + b;
+      if (!this.explained || this.explained.n !== n) this.explained = { n, map: new Map() };
+      const hit = this.explained.map.get(key);
+      if (hit) return hit;
+      const events = this.log.events.map((_, i) => this.log.view(i, seat));
+      const p = MJ.Explain.request(this.url, { events, player_id: seat, a, b });
+      p.catch(() => this.explained.map.delete(key));
+      this.explained.map.set(key, p);
       return p;
     }
   }

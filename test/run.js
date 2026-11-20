@@ -7,6 +7,7 @@ require('../js/i18n.js');
 require('../js/paifu.js');
 require('../js/records.js');
 require('../js/mjai.js');
+require('../js/explain.js');
 require('../js/replay.js');
 const assert = require('assert');
 
@@ -271,6 +272,48 @@ function parseMetaTests() {
   console.log('parseMeta: ok');
 }
 
+function explainTests() {
+  const X = MJ.Explain;
+  // 实际动作 → Mortal 动作编号
+  assert.strictEqual(X.actionOf({ type: 'dahai', actor: 0, pai: '2m' }, 0, 'turn'), 1);
+  assert.strictEqual(X.actionOf({ type: 'dahai', actor: 0, pai: '5sr' }, 0, 'turn'), 36);
+  assert.strictEqual(X.actionOf({ type: 'dahai', actor: 0, pai: 'C' }, 0, 'turn'), 33);
+  assert.strictEqual(X.actionOf({ type: 'reach', actor: 2 }, 2, 'turn'), 37);
+  assert.strictEqual(X.actionOf({ type: 'chi', actor: 1, target: 0, pai: '3p', consumed: ['4p', '5p'] }, 1, 'call'), 38);
+  assert.strictEqual(X.actionOf({ type: 'chi', actor: 1, target: 0, pai: '4p', consumed: ['5p', '3p'] }, 1, 'call'), 39);
+  assert.strictEqual(X.actionOf({ type: 'chi', actor: 1, target: 0, pai: '5pr', consumed: ['3p', '4p'] }, 1, 'call'), 40);
+  assert.strictEqual(X.actionOf({ type: 'pon', actor: 3, target: 0, pai: 'E', consumed: ['E', 'E'] }, 3, 'call'), 41);
+  assert.strictEqual(X.actionOf({ type: 'hora', actor: 0, target: 2 }, 0, 'call'), 43);
+  assert.strictEqual(X.actionOf({ type: 'tsumo', actor: 1, pai: '?' }, 0, 'call'), 45, 'nobody called = pass');
+  assert.strictEqual(X.actionOf({ type: 'ryukyoku', deltas: [0, 0, 0, 0] }, 0, 'turn'), 44, 'kyuushu');
+  assert.strictEqual(X.actionOf({ type: 'ryukyoku', deltas: [0, 0, 0, 0] }, 0, 'call'), 45);
+  assert.deepStrictEqual(X.actionTile(35), { t: 13, red: true });
+  // Q 值 → 选项排序与 softmax
+  const it = X.items({ q: { 1: 0.3, 7: -0.5, 9: 0.2 } });
+  assert.deepStrictEqual(it.map((x) => x.action), [1, 9, 7]);
+  assert.ok(Math.abs(it.reduce((a, x) => a + x.p, 0) - 1) < 1e-9);
+  // 回放里的决策点
+  const U = Array(13).fill('?');
+  const ev = [
+    { type: 'start_kyoku', bakaze: 'E', dora_marker: '5m', kyoku: 1, honba: 0, kyotaku: 0, oya: 0, scores: [25000, 25000, 25000, 25000], tehais: [U, U, U, U] },
+    { type: 'tsumo', actor: 0, pai: '1m' }, { type: 'dahai', actor: 0, pai: '1m', tsumogiri: true },
+    { type: 'pon', actor: 2, target: 0, pai: '1m', consumed: ['1m', '1m'] }, { type: 'dahai', actor: 2, pai: '9p', tsumogiri: false },
+    { type: 'tsumo', actor: 3, pai: '2s' }, { type: 'reach', actor: 3 }, { type: 'dahai', actor: 3, pai: '2s', tsumogiri: true },
+    { type: 'end_kyoku' },
+  ];
+  const ky = MJ.Replay.splitKyoku(ev)[0];
+  const at = (pos) => MJ.Replay.decisionAt(ev, ky, pos);
+  assert.strictEqual(at(0), null, 'deal');
+  assert.deepStrictEqual(at(1), { seat: 0, kind: 'turn', actual: 0 });
+  assert.deepStrictEqual(at(2), { seat: 2, kind: 'call', actual: 41 }, 'pon after own discard');
+  assert.deepStrictEqual(at(3), { seat: 2, kind: 'turn', actual: 17 }, 'discard after pon');
+  assert.deepStrictEqual(at(4), { seat: 0, kind: 'call', actual: 45 }, 'could seat 0 call?');
+  assert.deepStrictEqual(at(5), { seat: 3, kind: 'turn', actual: 37 });
+  assert.deepStrictEqual(at(6), { seat: 3, kind: 'turn', actual: 19 }, 'discard after reach');
+  assert.strictEqual(at(8), null, 'end');
+  console.log('explain: ok');
+}
+
 async function paifuStoreTests() {
   await MJ.Paifu.put('a', { events: [1] });
   assert.deepStrictEqual(await MJ.Paifu.get('a'), { events: [1] });
@@ -283,6 +326,7 @@ async function paifuStoreTests() {
 (async () => {
   await callPriorityTests();
   parseMetaTests();
+  explainTests();
   i18nTests();
   await paifuStoreTests();
   const N = +process.argv[2] || 200;

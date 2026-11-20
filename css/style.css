@@ -958,3 +958,55 @@ html[lang='en'] .act { letter-spacing: 0.02em; font-family: var(--serif); font-s
 html[lang='en'] .btn { letter-spacing: 0.02em; }
 html[lang='en'] .bubble { font-family: var(--serif); font-size: calc(var(--w) * 1.25); white-space: nowrap; }
 html[lang='en'] .hp-row { grid-template-columns: 7.6em 1fr 3.4em 3em; } html[lang='en'] .hp-row.plain { grid-template-columns: 6em 1fr; }
+
+/* ------------------------------------------------------------ Mortal 归因（「策」面板的「为什么」页、牌谱回放的 Mortal 分析） */
+.hp-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.06); margin-left: auto; }
+.hp-tabs button { font: inherit; font-size: 11.5px; color: var(--cream); background: none; border: 0; padding: 2px 9px; border-radius: 6px; cursor: pointer; opacity: 0.7; }
+.hp-tabs button.on { background: rgba(233, 196, 106, 0.22); color: var(--gold); opacity: 1; }
+.hp-pane { display: flex; flex-direction: column; gap: 4px; }
+.hp-pane[hidden] { display: none; }
+.hp-row.pick { cursor: pointer; border-radius: 6px; }
+.hp-row.pick:hover { background: rgba(255, 255, 255, 0.06); }
+.hp-row.cmp { background: rgba(127, 179, 217, 0.13); }
+.xa { display: flex; flex-direction: column; gap: 4px; --dx: 0; --dy: 1; }
+.xa-q { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.xa-q > span { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.xa-q small { font-size: 11px; opacity: 0.6; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.xa-tile { display: inline-flex; --tw: 18px; --dx: 0; --dy: 1; }
+.xa-act { font-family: var(--kai); font-size: 14px; }
+.xa-vs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 11px; }
+.xa-vs > span { opacity: 0.6; margin-right: 2px; }
+.xa-b { display: inline-flex; align-items: center; padding: 2px 4px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.04); color: var(--cream); cursor: pointer; font: inherit; font-size: 11px; }
+.xa-b .xa-tile { --tw: 15px; }
+.xa-b.on { border-color: #7fb3d9; background: rgba(127, 179, 217, 0.2); }
+.xa-axis { display: flex; justify-content: space-between; font-size: 10.5px; opacity: 0.6; margin: 2px 0 -1px; }
+.xa-axis span { display: inline-flex; align-items: center; gap: 3px; }
+.xa-axis .xa-tile { --tw: 12px; }
+.xa-row { display: grid; grid-template-columns: 6.4em 1fr 2.9em 2.3em; align-items: center; gap: 6px; min-height: 21px; font-size: 12px; }
+.xa-lab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xa-bar { position: relative; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); }
+.xa-bar::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(255, 255, 255, 0.32); }
+.xa-bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.xa-bar i.pos { background: var(--gold); }
+.xa-bar i.neg { background: #7fb3d9; }
+.xa-v { text-align: right; font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.xa-v.pos { color: var(--gold); }
+.xa-v.neg { color: #9cc6e6; }
+.xa-ts { display: inline-flex; gap: 2px; --tw: 13px; }
+.xa-tt { display: inline-flex; border-bottom: 2px solid transparent; padding-bottom: 1px; }
+.xa-tt.pos { border-color: var(--gold); }
+.xa-tt.neg { border-color: #7fb3d9; }
+.xa-note { font-size: 11px; opacity: 0.5; line-height: 1.5; margin-top: 2px; }
+.xa-msg { font-size: 12.5px; opacity: 0.75; line-height: 1.6; padding: 4px 0; }
+.rp-ctrl [data-a="ai"].on { border-color: var(--gold); color: var(--gold); background: rgba(233, 196, 106, 0.12); }
+.rp-ai { flex-shrink: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 18px; padding: 10px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); font-size: 13px; max-height: 44%; overflow: auto; }
+.rp-ai[hidden] { display: none; }
+.rp-ai > .xa-msg { grid-column: 1 / -1; }
+.rp-ai-opts { display: flex; flex-direction: column; gap: 3px; }
+.rp-ai .hp-lab .xa-tile { --tw: 18px; }
+.rp-ai .real { font-style: normal; font-size: 10.5px; padding: 0 5px; border-radius: 5px; background: rgba(240, 138, 117, 0.22); color: #f6b3a3; margin-left: 4px; }
+@media (max-width: 760px) { .rp-ai { grid-template-columns: 1fr; gap: 10px; max-height: 34%; } .rp-table { min-height: 22%; } }
+html[lang='en'] .xa-row { grid-template-columns: 7.8em 1fr 2.9em 2.3em; }
+.xa-row.base { opacity: 0.6; border-top: 1px dashed rgba(255, 255, 255, 0.12); padding-top: 3px; margin-top: 1px; }
+.xa-row.base .xa-bar i { background: rgba(255, 255, 255, 0.45); }
+.xa-row.base .xa-v { color: inherit; }

@@ -1,8 +1,8 @@
 /* 离线支持：联网时总是取最新文件并顺手更新缓存，断网时回退到缓存。 */
-const CACHE = 'queting-v8';
+const CACHE = 'queting-v9';
 const ASSETS = [
   './', 'index.html', 'manifest.json', 'icon.svg', 'css/style.css',
-  'js/core.js', 'js/store.js', 'js/i18n.js', 'js/game.js', 'js/ai.js', 'js/mjai.js', 'js/paifu.js', 'js/records.js', 'js/replay.js', 'js/settings.js', 'js/render.js', 'js/sound.js', 'js/ui.js', 'js/tutorial.js', 'js/main.js',
+  'js/core.js', 'js/store.js', 'js/i18n.js', 'js/game.js', 'js/ai.js', 'js/mjai.js', 'js/explain.js', 'js/paifu.js', 'js/records.js', 'js/replay.js', 'js/settings.js', 'js/render.js', 'js/sound.js', 'js/ui.js', 'js/tutorial.js', 'js/main.js',
 ];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

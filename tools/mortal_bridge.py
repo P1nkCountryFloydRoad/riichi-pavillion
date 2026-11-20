@@ -21,10 +21,12 @@ import collections
 import json
 import os
 import queue
+import re
 import shlex
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 FIRST_TIMEOUT = 120.0  # 进程刚启动时要加载模型，给足时间
@@ -57,7 +59,7 @@ class Bot:
     def _read_err(self):
         # 机器人的日志照常显示在桥接程序的终端里，同时保留最后几行用于报错
         for line in self.proc.stderr:
-            sys.stderr.write('[seat %d] %s' % (self.seat, line))
+            sys.stderr.write('[seat %s] %s' % (self.seat, line))
             if line.strip():
                 self.stderr_tail.append(line.rstrip())
 
@@ -142,7 +144,32 @@ class Pool:
             bot.close()
 
 
-def make_handler(pool, verbose):
+class Explainer:
+    """梯度归因子进程（tools/mortal_explain.py），第一次请求时才启动；同一时间只处理一个请求。"""
+
+    def __init__(self, argv, cwd):
+        self.argv = argv
+        self.cwd = cwd
+        self.bot = None
+        self.lock = threading.Lock()
+
+    def explain(self, req):
+        with self.lock:
+            if self.bot is None or not self.bot.alive():
+                if self.bot is not None:
+                    self.bot.close()
+                self.bot = Bot(self.argv, self.cwd, 'explain')
+            r = self.bot.react([req], True)
+            if r is None:
+                raise RuntimeError('归因进程没有回应')
+            return r
+
+    def close(self):
+        if self.bot is not None:
+            self.bot.close()
+
+
+def make_handler(pool, explainer, verbose):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, obj):
             body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -160,11 +187,13 @@ def make_handler(pool, verbose):
 
         def do_GET(self):
             if self.path.rstrip('/') == '/health':
-                self._send(200, {'ok': True, 'engine': pool.engine})
+                self._send(200, {'ok': True, 'engine': pool.engine, 'explain': explainer is not None})
             else:
                 self._send(404, {'error': 'not found'})
 
         def do_POST(self):
+            if self.path.rstrip('/') == '/explain':
+                return self._explain()
             if self.path.rstrip('/') != '/react':
                 return self._send(404, {'error': 'not found'})
             try:
@@ -185,11 +214,37 @@ def make_handler(pool, verbose):
                 print('[bridge] seat error: %s' % e, file=sys.stderr)
                 self._send(200, {'error': str(e)})
 
+        def _explain(self):
+            try:
+                if explainer is None:
+                    raise RuntimeError('归因需要用 --mortal-dir 运行真正的 Mortal')
+                n = int(self.headers.get('Content-Length') or 0)
+                req = json.loads(self.rfile.read(n).decode('utf-8'))
+                t0 = time.time()
+                r = explainer.explain(req)
+                if verbose:
+                    print('[explain] %d ms' % ((time.time() - t0) * 1000), file=sys.stderr)
+                self._send(200, r)
+            except Exception as e:
+                print('[bridge] explain error: %s' % e, file=sys.stderr)
+                self._send(200, {'error': str(e)})
+
         def log_message(self, fmt, *args):
             if verbose:
                 sys.stderr.write('[http] ' + (fmt % args) + '\n')
 
     return Handler
+
+
+def config_state_file(path):
+    """从 Mortal 的 config.toml 里读出 [control] state_file（读不到就返回 None）"""
+    try:
+        with open(path, encoding='utf-8') as f:
+            m = re.search(r"^\s*state_file\s*=\s*['\"]([^'\"]+)['\"]", f.read(), re.M)
+    except OSError:
+        return None
+    p = m and os.path.expanduser(m.group(1))
+    return p if p and os.path.isfile(p) else None
 
 
 def main():
@@ -201,6 +256,7 @@ def main():
     ap.add_argument('--name', help='配合 --model：在游戏里显示的模型名称')
     ap.add_argument('--python', help='运行 mortal.py 的 Python（默认：Mortal 仓库下的 .venv，否则当前解释器）')
     ap.add_argument('--cwd', help='配合 --cmd：机器人进程的工作目录')
+    ap.add_argument('--explain-device', default='auto', help='梯度归因用的设备：auto（默认，Apple 芯片用 GPU）/ cpu / mps / cuda')
     ap.add_argument('--host', default='127.0.0.1')
     ap.add_argument('--port', type=int, default=8174)
     ap.add_argument('-v', '--verbose', action='store_true', help='打印收发的每个事件')
@@ -208,6 +264,8 @@ def main():
 
     if a.model and not a.mortal_dir:
         ap.error('--model 需要和 --mortal-dir 一起使用')
+    explainer = None
+    here = os.path.dirname(os.path.abspath(__file__))
     if a.mortal_dir:
         mdir = os.path.abspath(os.path.expanduser(a.mortal_dir))
         if not os.path.isfile(os.path.join(mdir, 'mortal.py')):
@@ -221,18 +279,22 @@ def main():
             if not os.path.isfile(model):
                 ap.error('找不到权重文件 %s' % model)
             name = a.name or os.path.splitext(os.path.basename(model))[0]
-            runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mortal_runner.py')
+            runner = os.path.join(here, 'mortal_runner.py')
             make_argv = lambda seat: [py, runner, '--mortal-dir', mdir, '--model', model, '--name', name, str(seat)]
             cwd, engine = mdir, 'Mortal · ' + name
         else:
             make_argv = lambda seat: [py, 'mortal.py', str(seat)]
             cwd, engine = mdir, 'Mortal'
+            model = config_state_file(os.path.join(mdir, 'config.toml'))
+        if model:
+            explainer = Explainer([py, os.path.join(here, 'mortal_explain.py'), '--mortal-dir', mdir,
+                                   '--model', model, '--device', a.explain_device], mdir)
     else:
         make_argv = lambda seat: [x.replace('{seat}', str(seat)) for x in shlex.split(a.cmd)]
         cwd, engine = a.cwd, 'mjai: ' + a.cmd
 
     pool = Pool(make_argv, cwd, engine)
-    srv = ThreadingHTTPServer((a.host, a.port), make_handler(pool, a.verbose))
+    srv = ThreadingHTTPServer((a.host, a.port), make_handler(pool, explainer, a.verbose))
     print('雀庭桥接程序已启动：http://%s:%d  （引擎：%s）  Ctrl+C 退出' % (a.host, a.port, engine), file=sys.stderr)
     try:
         srv.serve_forever()
@@ -240,6 +302,8 @@ def main():
         pass
     finally:
         pool.close()
+        if explainer:
+            explainer.close()
         srv.server_close()
 
 
