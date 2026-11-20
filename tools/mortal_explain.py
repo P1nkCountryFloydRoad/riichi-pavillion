@@ -6,11 +6,11 @@
      再把每个输入元素的贡献按含义归到十几个组里（手牌、宝牌、点数、各家牌河、单人期望值表……）。
 
   * Q(A) − Q(B) 只取决于优势头 A(s,a)，局面价值 V(s) 和均值项会抵消，所以这个差值本身就是「选 A 比选 B 好多少」。
-  * 积分梯度的基线是「空白局面、四家各 25,000 点」；各组贡献之和 = Δ(当前局面) − Δ(基线)，误差由步数决定。
+  * 积分梯度的基线是「空白局面、四家各 25,000 点、东一局东家、满牌山」；各组贡献之和 = Δ(当前局面) − Δ(基线)，误差由步数决定。
   * 只根据该座位能看到的信息：他家的配牌和摸牌在送进 libriichi 之前会被替换成 "?"。
 
 作为子进程运行（由 tools/mortal_bridge.py 启动），每行读一个 JSON 请求、回一个 JSON 结果：
-    {"events": [...mjai 事件...], "player_id": 0, "a": 动作编号或省略, "b": 动作编号或省略, "steps": 32}
+    {"events": [...mjai 事件...], "player_id": 0, "a": 动作编号或省略, "b": 动作编号或省略, "steps": 64}
 也可以 import 后直接调用 Explainer.explain()。
 """
 import argparse
@@ -84,15 +84,20 @@ def v4_channel_groups():
 
 
 def baseline_obs():
-    """积分梯度的基线：空白局面，但四家各 25,000 点、顺位不分先后。
-    全零基线相当于「四家都是 0 分」，点数这一组的贡献会被严重夸大；
-    用平分作基线后，点数组的含义就是「当前点差和四家平分相比」。"""
+    """积分梯度的基线：没有任何牌的空白局面，但点数与局况取「一场刚开始」的样子：
+    四家各 25,000 点、顺位不分先后、东一局东家、0 本场 0 供托、牌山是满的。
+    全零基线相当于「四家都是 0 分、牌山已经摸完」，点数组和局况组的贡献会被严重夸大；
+    换成开局的样子后，这两组的含义就是「当前点差 / 局况和开局相比」。"""
     import numpy as np
     x = np.zeros((V4_CHANNELS, 34), dtype=np.float32)
     for p in range(4):  # 通道 7 起：每家两种缩放（/100000、/30000）
         x[7 + 2 * p] = 25000 / 100000
         x[8 + 2 * p] = 25000 / 30000
     x[15:19] = 0.25     # 顺位 one-hot → 均匀
+    x[19] = 1           # 局 one-hot：第 1 局（本场 23、供托 24、场次进度 27 保持 0）
+    x[25, 27] = 1       # 场风：东
+    x[26, 27] = 1       # 自风：东
+    x[717] = 1          # 余牌：满牌山（tiles_left / 69）
     return x
 
 
@@ -160,7 +165,7 @@ class Explainer:
         groups = v4_channel_groups()
         self.group_index = {k: [i for i, x in enumerate(groups) if x == k] for k in GROUP_KEYS}
 
-    def warmup(self, steps=32):
+    def warmup(self, steps=64):
         """第一次在 GPU 上反向传播要编译内核，启动时先空跑一次"""
         torch = self.torch
         x = torch.zeros((steps, V4_CHANNELS, 34), device=self.device, requires_grad=True)
@@ -184,7 +189,7 @@ class Explainer:
             m = torch.as_tensor(mask, device=self.device)[None]
             return self.dqn(self.brain(x), m)[0].cpu()
 
-    def explain(self, events, pid=0, a=None, b=None, steps=32):
+    def explain(self, events, pid=0, a=None, b=None, steps=64):
         torch, np = self.torch, self.np
         t0 = time.time()
         obs, mask, st = self.encode(events, pid)
@@ -206,22 +211,28 @@ class Explainer:
             res['error'] = '需要两个不同的合法操作才能比较'
             return res
 
-        # 积分梯度：沿 基线 → obs 的直线取 steps 个中点，平均梯度 × (obs − 基线)
         dev = self.device
         x = torch.as_tensor(obs, device=dev)
         x0 = torch.as_tensor(baseline_obs(), device=dev)
         mt = torch.as_tensor(mask, device=dev)[None]
-        m = mt.expand(steps, -1)
-        alphas = (torch.arange(steps, dtype=torch.float32, device=dev) + 0.5) / steps
-        path = (x0[None] + alphas[:, None, None] * (x - x0)[None]).requires_grad_(True)
-        qq = self.dqn(self.brain(path), m)
-        (qq[:, a] - qq[:, b]).sum().backward()
-        attr = (path.grad.mean(0) * (x - x0)).cpu().numpy()  # (1012, 34)
-
         with torch.no_grad():
             q0 = self.dqn(self.brain(x0[None]), mt)[0].cpu()
         delta = float(q[a] - q[b])
         base = float(q0[a] - q0[b])
+
+        # 积分梯度：沿 基线 → obs 的直线取 steps 个中点，平均梯度 × (obs − 基线)。
+        # 各组合计应等于 Δ − 基线；差得多说明路径上曲率大，步数加倍重算（最多 128 步）
+        while True:
+            m = mt.expand(steps, -1)
+            alphas = (torch.arange(steps, dtype=torch.float32, device=dev) + 0.5) / steps
+            path = (x0[None] + alphas[:, None, None] * (x - x0)[None]).requires_grad_(True)
+            qq = self.dqn(self.brain(path), m)
+            (qq[:, a] - qq[:, b]).sum().backward()
+            attr = (path.grad.mean(0) * (x - x0)).cpu().numpy()  # (1012, 34)
+            err = abs(float(attr.sum()) - (delta - base))
+            if err <= 0.05 * max(1.0, abs(delta - base)) or steps >= 128:
+                break
+            steps *= 2
 
         # 逐行判断：整行数值相同的是「标量特征」（点数、局数……），不分配到具体的牌
         per_tile_rows = np.array([not np.allclose(obs[r], obs[r][0]) for r in range(obs.shape[0])])
@@ -300,7 +311,7 @@ def main():
         try:
             req = json.loads(line)
             out = ex.explain(req.get('events') or [], int(req.get('player_id', 0)),
-                             req.get('a'), req.get('b'), max(4, min(128, int(req.get('steps') or 32))))
+                             req.get('a'), req.get('b'), max(4, min(128, int(req.get('steps') or 64))))
         except Exception as e:  # 出错也要回一行，桥接程序才不会干等
             out = {'error': '%s: %s' % (type(e).__name__, e)}
         print(json.dumps(out, ensure_ascii=False, separators=(',', ':')), flush=True)

@@ -107,10 +107,10 @@ Mortal 提示用的是你这一家视角的脱敏事件，和对手一样看不�
 做法（`tools/mortal_explain.py`）：
 
 1. 用 libriichi 把这一家视角的局面编码成 Mortal v4 的输入（1012 个通道 × 34 种牌），他家配牌和摸牌一律替换成 `?`
-2. 对 Q(A) − Q(B) 求积分梯度（32 步）。这个差值只取决于 Mortal 的优势头，局面价值会抵消，所以它就是「A 比 B 好多少」
+2. 对 Q(A) − Q(B) 求积分梯度（默认 64 步；各组合计和 Q 差对不上时自动加倍，最多 128 步）。这个差值只取决于 Mortal 的优势头，局面价值会抵消，所以它就是「A 比 B 好多少」
 3. 按 `obs_repr.rs` 的编码顺序，把 1012 个通道归成十几组：手牌、宝牌、点数与顺位、局况、自己的牌河、下家 / 对家 / 上家（牌河、手切、立直、副露）、已见牌、向听与听牌、可选操作，以及 libriichi 预先算好的单人牌效表（进张、听牌率、和牌率、打点）
 
-基线是「空白局面、四家各 25,000 点」：点数这一组的含义是「当前点差和四家平分相比」。各组相加约等于 Q 差减去「基线偏好」，后者是模型不看局面时的先验，单独列成一行。每组旁边的小牌图是该组里影响最大的牌（宝牌组显示宝牌本身）。
+基线是「没有任何牌的空白局面，四家各 25,000 点、东一局东家、满牌山」：点数这一组的含义是「当前点差和四家平分相比」，局况这一组是「和东一局开局相比」。面板底部的「怎么看 · 词语说明」解释每一行。各组相加约等于 Q 差减去「基线偏好」，后者是模型不看局面时的先验，单独列成一行。每组旁边的小牌图是该组里影响最大的牌（宝牌组显示宝牌本身）。
 
 归因说明的是网络对哪些输入敏感，不是它的思考过程；各组之间有冗余（例如手牌信息也隐含在牌效表里），所以只看大的组，不要细究单个数值。
 
@@ -276,10 +276,10 @@ The “Why” tab of the hint panel (or tapping a row in the list) answers “wh
 How it works (`tools/mortal_explain.py`):
 
 1. libriichi encodes that seat's view of the game into Mortal v4's input (1012 channels × 34 tile kinds). Other players' starting hands and draws are replaced with `?`
-2. It takes integrated gradients (32 steps) of Q(A) − Q(B). This difference depends only on Mortal's advantage head, because the state value cancels out, so it measures exactly “how much better A is than B”
+2. It takes integrated gradients of Q(A) − Q(B) (64 steps by default, doubled up to 128 when the groups do not add up to the gap). This difference depends only on Mortal's advantage head, because the state value cancels out, so it measures exactly “how much better A is than B”
 3. Following the encoding order in `obs_repr.rs`, the 1012 channels are grouped into about fifteen groups: hand, dora, scores and rank, round state, own discards, the right / across / left players (discards, tedashi, riichi, calls), visible tiles, shanten and waits, legal actions, and libriichi's precomputed single-player tables (ukeire, tenpai odds, win odds, value)
 
-The baseline is an empty table with all four players at 25,000, so the score group means “the current point gaps compared with an even game”. The groups add up to roughly the Q gap minus the “Baseline” row, which is the model's prior when it sees no game and is shown on its own line. The small tiles next to a group are its most influential tiles (the Dora group shows the dora itself).
+The baseline is an empty table with all four players at 25,000, East 1 with you as dealer and a full wall, so the score group means “the current point gaps compared with an even game” and the round group means “compared with the start of East 1”. “How to read” at the bottom of the panel explains every row. The groups add up to roughly the Q gap minus the “Baseline” row, which is the model's prior when it sees no game and is shown on its own line. The small tiles next to a group are its most influential tiles (the Dora group shows the dora itself).
 
 Attribution shows which inputs the network is sensitive to, not how it reasons. The groups overlap (for example, hand information is also implied by the efficiency tables), so read the large groups and don't over-read single numbers.
 

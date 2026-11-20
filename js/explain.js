@@ -9,24 +9,26 @@
   const MJ = root.MJ;
   const L = (zh, en) => (MJ.L ? MJ.L(zh, en) : zh);
 
-  // 组名：[中文, English, 中文说明, English tip]
+  // 组名：[中文, English, 中文说明, English 说明]；说明会出现在面板底部的「词语说明」里
   const GROUPS = {
-    hand: ['手牌', 'Hand', '自己的手牌（含赤宝牌）', 'Your own hand, including red fives'],
-    dora: ['宝牌', 'Dora', '宝牌指示牌、各家持有的宝牌数、还没见到的宝牌数', 'Dora indicators, dora each player holds, dora not yet seen'],
-    score: ['点数与顺位', 'Scores & rank', '四家点数和当前顺位', 'All four scores and the current placement'],
-    round: ['局况', 'Round', '场次、本场、供托、场风/自风、余牌数', 'Round, honba, riichi sticks, winds, tiles left'],
-    self: ['自己的牌河', 'Own discards', '自己的牌河、副露、暗杠', 'Your discards, calls and closed kans'],
-    p1: ['下家', 'Right', '下家的牌河（手切/摸切、立直宣言牌）、副露、立直状态', "Right player's discards (tedashi, riichi tile), calls, riichi state"],
-    p2: ['对家', 'Across', '对家的牌河、副露、立直状态', "Across player's discards, calls, riichi state"],
-    p3: ['上家', 'Left', '上家的牌河、副露、立直状态', "Left player's discards, calls, riichi state"],
-    seen: ['已见牌', 'Visible tiles', '每种牌场上已经见到几张', 'How many of each tile are already visible'],
-    status: ['向听与听牌', 'Shanten & waits', '向听数、待牌、振听、自己是否已立直', 'Shanten, waits, furiten, own riichi'],
-    actions: ['可选操作', 'Legal actions', '此刻能做哪些操作（能打哪些牌、能否鸣牌/立直/和牌）', 'Which actions are available right now'],
-    ukeire: ['牌效·进张', 'Solo: ukeire', 'libriichi 预先算好的：每种打法的有效进张（只看自己，不考虑他家）', 'Precomputed by libriichi: ukeire of each discard, ignoring opponents'],
-    tenpai: ['牌效·听牌率', 'Solo: tenpai', '每种打法在之后各巡的听牌率（单人计算）', 'Tenpai probability by turn for each discard (solo calc)'],
-    win: ['牌效·和牌率', 'Solo: win', '每种打法在之后各巡的和牌率（单人计算）', 'Win probability by turn for each discard (solo calc)'],
-    ev: ['牌效·打点', 'Solo: value', '每种打法的期望得点（单人计算，含宝牌与役）', 'Expected points of each discard (solo calc, with dora and yaku)'],
+    hand: ['手牌', 'Hand', '你手里的牌本身（含赤宝牌）', 'The tiles in your hand (including red fives)'],
+    dora: ['宝牌', 'Dora', '宝牌是哪张、各家手里/副露里有几张宝牌、还有几张宝牌没见到', 'Which tile is dora, how many dora each player shows or holds, how many are still unseen'],
+    score: ['点数与顺位', 'Scores & rank', '四家点数和你现在的顺位（和四家平分相比）', 'All four scores and your placement (compared with an even game)'],
+    round: ['局况', 'Round', '第几局、本场、供托、场风/自风、牌山还剩几张（和东一局开局相比）', 'Round, honba, riichi sticks, winds, tiles left (compared with the start of East 1)'],
+    self: ['自己的牌河', 'Own discards', '你打过的牌（顺序、摸切还是手切）、你的副露和暗杠', 'Your discards (order, tsumogiri or not), your calls and closed kans'],
+    p1: ['下家', 'Right', '下家打过的牌（顺序、手切/摸切、立直宣言牌）、副露、是否立直', "Right player's discards (order, tedashi, riichi tile), calls, riichi"],
+    p2: ['对家', 'Across', '对家打过的牌、副露、是否立直', "Across player's discards, calls, riichi"],
+    p3: ['上家', 'Left', '上家打过的牌、副露、是否立直', "Left player's discards, calls, riichi"],
+    seen: ['已见牌', 'Visible tiles', '每种牌场上已经能看到几张（牌河、副露、宝牌指示牌、你的手牌），决定还剩几张能摸到', 'How many of each tile are visible (discards, calls, dora indicator, your hand), i.e. how many are left to draw'],
+    status: ['向听与听牌', 'Shanten & waits', '你现在几向听、听哪些牌、是否振听、是否已经立直', 'Your shanten, waits, furiten, and whether you are in riichi'],
+    actions: ['可选操作', 'Legal actions', '规则上此刻能做什么：能打哪些牌、能否立直/鸣牌/和牌、打哪张能保持向听。不是 Mortal 的偏好', 'What the rules allow right now: which tiles can be discarded, whether you can riichi / call / win, which discards keep shanten. Not a preference'],
+    ukeire: ['牌效·进张', 'Solo: ukeire', 'libriichi 事先算好的单人牌效表：每种打法有几张有效进张。只看自己，不考虑他家', "libriichi's precomputed solo table: ukeire of each discard, ignoring opponents"],
+    tenpai: ['牌效·听牌率', 'Solo: tenpai', '单人牌效表：每种打法在之后几巡内听牌的概率', 'Solo table: chance of reaching tenpai within the next turns for each discard'],
+    win: ['牌效·和牌率', 'Solo: win', '单人牌效表：每种打法在之后几巡内和牌的概率', 'Solo table: chance of winning within the next turns for each discard'],
+    ev: ['牌效·打点', 'Solo: value', '单人牌效表：每种打法的期望得点（算上宝牌和役）', 'Solo table: expected points of each discard (with dora and yaku)'],
   };
+  // 这些组的「列」不是「这张牌」：牌效表和可选操作按「打哪张」排列，进张表按「需要哪张」排列，所以不显示小牌图
+  const NO_TILES = new Set(['actions', 'ukeire', 'tenpai', 'win', 'ev']);
   const groupName = (k, seatNames) => {
     if (seatNames && /^p[123]$/.test(k)) return seatNames[+k[1]];
     const g = GROUPS[k];
@@ -153,7 +155,7 @@
         `<span class="xa-bar"><i class="${v >= 0 ? 'pos' : 'neg'}" style="${bar}"></i></span>` +
         `<span class="xa-v ${v >= 0 ? 'pos' : 'neg'}">${sign(v)}</span><span class="xa-ts">${tiles || ''}</span></div>`;
     };
-    const tilesOf = (g) => (g.tiles || [])
+    const tilesOf = (g) => (NO_TILES.has(g.key) ? [] : g.tiles || [])
       .filter(([t, v]) => !skip.has(t) && Math.abs(v) >= tileCut)
       .slice(0, 2)
       .map(([t, v]) => {
@@ -164,7 +166,9 @@
 
     const rows = shown.map((g) => row(groupName(g.key, opts.seatNames), groupTip(g.key), g.v, tilesOf(g))).join('') +
       (rest.length ? row(L(`其他 ${rest.length} 组`, `${rest.length} others`), rest.map((g) => groupName(g.key, opts.seatNames)).join(' · '), restV, '') : '') +
-      row(L('基线偏好', 'Baseline'), L('空白局面（四家各 25,000 点、没有手牌和牌河）下 A 比 B 好多少：模型不看具体局面时的先验，不算任何一组的功劳', 'How much A beats B on an empty table (all at 25,000, no tiles): the model\'s prior, not credited to any group'), res.base, '', 'base');
+      row(L('基线偏好', 'Baseline'), L('空白局面下 A 比 B 好多少：模型不看具体局面时的先验，不算任何一组的功劳', 'How much A beats B on an empty table: the model\'s prior, not credited to any group'), res.base, '', 'base');
+    const gloss = Object.keys(GROUPS).map((k) => `<dt>${groupName(k, opts.seatNames)}</dt><dd>${groupTip(k)}</dd>`).join('') +
+      `<dt>${L('基线偏好', 'Baseline')}</dt><dd>${L('空白局面（没有任何牌、四家各 25,000 点、东一局开局）下 A 比 B 好多少，是模型不看具体局面时的先验', 'How much A beats B on an empty table (no tiles, all at 25,000, start of East 1): the model\'s prior')}</dd>`;
     const compare = opts.compare && opts.compare.length
       ? `<div class="xa-vs"><span>${L('对比', 'vs')}</span>${opts.compare.map((c) => `<button class="xa-b${c.action === res.b ? ' on' : ''}" data-b="${c.action}">${c.html}</button>`).join('')}</div>`
       : '';
@@ -173,9 +177,12 @@
       ${compare}
       <div class="xa-axis"><span>← ${L('支持', 'favors')} ${B}</span><span>${L('支持', 'favors')} ${A} →</span></div>
       ${rows}
-      <div class="xa-note">${L(
-        `积分梯度：和空白局面（四家各 25,000 点）相比，每组输入让「A 比 B 好多少」变了多少；各行相加 ≈ Q 差。小牌图是该组里影响最大的牌，宝牌组显示的是宝牌本身。`,
-        `Integrated gradients: compared with an empty table (all at 25,000), how much each input group changes "how much better A is than B"; the rows add up to about the Q gap. Small tiles are the most influential tiles in that group; for Dora it shows the dora itself.`)}</div>
+      <details class="xa-gloss"><summary>${L('怎么看 · 词语说明', 'How to read · what the rows mean')}</summary>
+        <p>${L(
+          `每一行是 Mortal 看到的一类信息。条往右（金色）= 这类信息让它更想选 A，往左（蓝色）= 更想选 B，数字是 Q 值，各行相加 ≈ Q 差。数值是和「空白局面」比出来的（积分梯度），只说明 Mortal 对哪些信息敏感，不是它的思考过程。小牌图是这一组里影响最大的牌，宝牌组显示宝牌本身。`,
+          `Each row is one kind of information Mortal sees. A bar to the right (gold) means it pushes towards A, to the left (blue) towards B. Numbers are in Q units and add up to about the Q gap. Values are measured against an empty table (integrated gradients): they show what Mortal is sensitive to, not how it reasons. Small tiles are the most influential tiles in that row; the Dora row shows the dora itself.`)}</p>
+        <dl>${gloss}</dl>
+      </details>
     </div>`;
   }
 

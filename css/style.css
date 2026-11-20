@@ -1010,3 +1010,12 @@ html[lang='en'] .xa-row { grid-template-columns: 7.8em 1fr 2.9em 2.3em; }
 .xa-row.base { opacity: 0.6; border-top: 1px dashed rgba(255, 255, 255, 0.12); padding-top: 3px; margin-top: 1px; }
 .xa-row.base .xa-bar i { background: rgba(255, 255, 255, 0.45); }
 .xa-row.base .xa-v { color: inherit; }
+.xa-gloss { font-size: 11.5px; margin-top: 2px; }
+.xa-gloss summary { cursor: pointer; opacity: 0.65; font-size: 11.5px; list-style: none; width: fit-content; padding: 2px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.06); }
+.xa-gloss summary::-webkit-details-marker { display: none; }
+.xa-gloss summary::before { content: '? '; color: var(--gold); font-weight: 700; }
+.xa-gloss[open] summary { opacity: 0.9; }
+.xa-gloss p { margin: 6px 0 4px; line-height: 1.55; opacity: 0.8; }
+.xa-gloss dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; line-height: 1.45; }
+.xa-gloss dt { white-space: nowrap; color: var(--gold); opacity: 0.9; }
+.xa-gloss dd { margin: 0; opacity: 0.75; }
